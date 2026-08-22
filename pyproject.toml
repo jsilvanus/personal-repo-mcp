@@ -1,6 +1,6 @@
 [project]
 name = "personal-repo-mcp"
-version = "0.1.0"
+version = "1.0.0"
 description = "A persistent, multi-repository MCP server for AI agents running on a VPS."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,10 @@ dependencies = [
   "mcp>=2.0,<3",
   "starlette>=0.48.0",
   "uvicorn[standard]>=0.35.0",
+]
+
+authors = [
+  { name = "Juha Itäleino" }
 ]
 
 [project.optional-dependencies]
