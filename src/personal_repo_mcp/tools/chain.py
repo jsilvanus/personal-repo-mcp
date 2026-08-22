@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 from mcp.server import MCPServer
 
+from ..audit.logger import AuditLogger
 from ..chain.executor import ChainExecutor
 from ..chain.model import ChainCommand, ChainPolicy
+
+
+AUDIT = AuditLogger(logging.getLogger("personal_repo_mcp.audit"))
 
 
 def register_chain_tools(mcp: MCPServer) -> None:
@@ -29,5 +35,9 @@ def register_chain_tools(mcp: MCPServer) -> None:
                 raise ValueError("Command arguments must be an object")
             parsed.append(ChainCommand(tool=command["tool"], arguments=arguments))
 
-        results = await executor.execute(repository, parsed, ChainPolicy(on_error=on_error))
-        return {"repository": repository, "results": results, "completed": len(results) == len(parsed)}
+        try:
+            with AUDIT.timed(principal="bearer", repository=repository, operation="chain_command"):
+                results = await executor.execute(repository, parsed, ChainPolicy(on_error=on_error))
+            return {"repository": repository, "results": results, "completed": len(results) == len(parsed)}
+        except Exception:
+            raise
