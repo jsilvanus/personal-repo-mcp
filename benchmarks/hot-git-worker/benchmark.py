@@ -16,15 +16,7 @@ from pathlib import Path
 
 
 def run(*args: str, cwd: Path, input: bytes | None = None, env: dict[str, str] | None = None) -> bytes:
-    result = subprocess.run(
-        args,
-        cwd=cwd,
-        check=True,
-        input=input,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-    )
+    result = subprocess.run(args, cwd=cwd, check=True, input=input, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     return result.stdout
 
 
@@ -39,17 +31,11 @@ def make_repo(files: int) -> tuple[Path, list[str]]:
         git("config", "user.name", "benchmark", cwd=root)
         git("config", "user.email", "benchmark@example.invalid", cwd=root)
         for i in range(files):
-            (root / f"file-{i:06d}.txt").write_text(
-                f"benchmark file {i}\n" + ("payload " * 20) + "\n", encoding="utf-8"
-            )
+            (root / f"file-{i:06d}.txt").write_text(f"benchmark file {i}\n" + ("payload " * 20) + "\n", encoding="utf-8")
         git("add", ".", cwd=root)
         git("commit", "-q", "-m", "benchmark", cwd=root)
         output = git("ls-tree", "-r", "HEAD", cwd=root).decode()
-        objects = [
-            parts[2]
-            for line in output.splitlines()
-            if len(parts := line.split()) >= 3 and parts[1] == "blob"
-        ]
+        objects = [parts[2] for line in output.splitlines() if len(parts := line.split()) >= 3 and parts[1] == "blob"]
         if not objects:
             raise RuntimeError("repository contains no blob objects")
         return root, objects
@@ -66,15 +52,8 @@ class CatFileWorker:
     """Long-lived git cat-file --batch process for object reads."""
 
     def __init__(self, repo: Path) -> None:
-        self.process = subprocess.Popen(
-            ["git", "cat-file", "--batch"],
-            cwd=repo,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        assert self.process.stdin is not None
-        assert self.process.stdout is not None
+        self.process = subprocess.Popen(["git", "cat-file", "--batch"], cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert self.process.stdin is not None and self.process.stdout is not None
         self.stdin = self.process.stdin
         self.stdout = self.process.stdout
         self.lock = threading.Lock()
@@ -115,7 +94,6 @@ def treeless_edit(repo: Path, ref: str, path: str, suffix: str, message: str) ->
     blob = tree_for_path(repo, base_commit, path)
     original = git("cat-file", "blob", blob, cwd=repo)
     new_blob = git("hash-object", "-w", "--stdin", cwd=repo, input=original + suffix.encode()).decode().strip()
-
     index_path = Path(tempfile.mktemp(prefix="hot-git-index-"))
     env = {**os.environ, "GIT_INDEX_FILE": str(index_path)}
     try:
@@ -124,7 +102,6 @@ def treeless_edit(repo: Path, ref: str, path: str, suffix: str, message: str) ->
         new_tree = git("write-tree", cwd=repo, env=env).decode().strip()
     finally:
         index_path.unlink(missing_ok=True)
-
     return git("commit-tree", new_tree, "-p", base_commit, "-m", message, cwd=repo).decode().strip()
 
 
@@ -144,31 +121,24 @@ def worktree_edit(repo: Path, ref: str, path: str, suffix: str, message: str) ->
 
 
 def cas_update(repo: Path, ref: str, expected: str, new_value: str) -> bool:
-    result = subprocess.run(
-        ["git", "update-ref", ref, new_value, expected],
-        cwd=repo,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    result = subprocess.run(["git", "update-ref", ref, new_value, expected], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return result.returncode == 0
 
 
 def unconditional_update(repo: Path, ref: str, new_value: str) -> bool:
-    result = subprocess.run(
-        ["git", "update-ref", ref, new_value],
-        cwd=repo,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    result = subprocess.run(["git", "update-ref", ref, new_value], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return result.returncode == 0
 
 
-def benchmark_reads(repo: Path, objects: list[str], reads: int) -> tuple[float, float, int]:
+def benchmark_reads(repo: Path, objects: list[str], reads: int) -> tuple[float, float, float, int]:
     sample = [random.choice(objects) for _ in range(reads)]
     started = time.perf_counter()
     total = sum(len(read_one_process(repo, obj)) for obj in sample)
     cold = time.perf_counter() - started
+
+    started = time.perf_counter()
     worker = CatFileWorker(repo)
+    startup = time.perf_counter() - started
     try:
         started = time.perf_counter()
         total_hot = sum(len(worker.read(obj)) for obj in sample)
@@ -176,7 +146,7 @@ def benchmark_reads(repo: Path, objects: list[str], reads: int) -> tuple[float, 
     finally:
         worker.close()
     assert total == total_hot
-    return cold, hot, total
+    return cold, startup, hot, total
 
 
 def benchmark_writes(repo: Path, count: int) -> tuple[float, float]:
@@ -184,7 +154,6 @@ def benchmark_writes(repo: Path, count: int) -> tuple[float, float]:
     for i in range(count):
         treeless_edit(repo, "HEAD", "file-000000.txt", f"edit {i}\n", f"treeless edit {i}")
     treeless_time = time.perf_counter() - started
-
     started = time.perf_counter()
     for i in range(count):
         worktree_edit(repo, "HEAD", "file-000000.txt", f"edit {i}\n", f"worktree edit {i}")
@@ -196,15 +165,11 @@ def benchmark_cas(repo: Path, workers: int) -> tuple[float, int, int, float, int
     base = git("rev-parse", "HEAD", cwd=repo).decode().strip()
     ref = "refs/heads/bench-cas"
     git("update-ref", ref, base, cwd=repo)
-    candidates = [
-        treeless_edit(repo, base, "file-000001.txt", f"worker {i}\n", f"worker {i}")
-        for i in range(workers)
-    ]
+    candidates = [treeless_edit(repo, base, "file-000001.txt", f"worker {i}\n", f"worker {i}") for i in range(workers)]
     started = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(lambda commit: cas_update(repo, ref, base, commit), candidates))
     cas_time = time.perf_counter() - started
-
     git("update-ref", ref, base, cwd=repo)
     started = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
@@ -223,34 +188,36 @@ def main() -> None:
     args = parser.parse_args()
     if min(args.files, args.reads, args.writes, args.workers) < 1:
         parser.error("all numeric arguments must be positive")
-
     random.seed(args.seed)
     repo, objects = make_repo(args.files)
     try:
         git("gc", "--quiet", cwd=repo)
         print(f"Files/blobs: {len(objects):,}")
         print(f"Reads: {args.reads:,}")
-        cold, hot, total = benchmark_reads(repo, objects, args.reads)
+        cold, startup, hot, total = benchmark_reads(repo, objects, args.reads)
         print("\nREAD")
         print(f"  subprocess-per-object: {cold:.3f}s")
-        print(f"  persistent cat-file:   {hot:.3f}s")
-        print(f"  speedup:                {cold / hot:.2f}x")
-        print(f"  bytes:                  {total:,}")
+        print(f"  persistent startup:     {startup * 1000:.2f}ms")
+        print(f"  persistent cat-file:    {hot:.3f}s")
+        print(f"  startup / hot reads:    {startup / hot:.2%}")
+        print(f"  speedup (reads only):    {cold / hot:.2f}x")
+        print(f"  speedup incl. startup:   {cold / (startup + hot):.2f}x")
+        print(f"  bytes:                   {total:,}")
 
         treeless_time, worktree_time = benchmark_writes(repo, args.writes)
         print("\nWRITE")
-        print(f"  treeless Git plumbing:  {treeless_time:.3f}s ({treeless_time / args.writes:.3f}s/edit)")
-        print(f"  worktree checkout:      {worktree_time:.3f}s ({worktree_time / args.writes:.3f}s/edit)")
-        print(f"  treeless speedup:       {worktree_time / treeless_time:.2f}x")
+        print(f"  treeless Git plumbing:   {treeless_time:.3f}s ({treeless_time / args.writes:.3f}s/edit)")
+        print(f"  worktree checkout:       {worktree_time:.3f}s ({worktree_time / args.writes:.3f}s/edit)")
+        print(f"  treeless speedup:        {worktree_time / treeless_time:.2f}x")
 
         cas_time, succeeded, conflicted, unconditional_time, unconditional_successes = benchmark_cas(repo, args.workers)
         print("\nCONCURRENT REF UPDATES")
-        print(f"  workers:                {args.workers}")
-        print(f"  CAS time:               {cas_time:.3f}s")
-        print(f"  CAS succeeded:          {succeeded}")
-        print(f"  CAS conflicts:          {conflicted}")
-        print(f"  unconditional time:     {unconditional_time:.3f}s")
-        print(f"  unconditional writes:   {unconditional_successes}")
+        print(f"  workers:                 {args.workers}")
+        print(f"  CAS time:                {cas_time:.3f}s")
+        print(f"  CAS succeeded:           {succeeded}")
+        print(f"  CAS conflicts:           {conflicted}")
+        print(f"  unconditional time:      {unconditional_time:.3f}s")
+        print(f"  unconditional writes:    {unconditional_successes}")
         print("\nNote: treeless edits use Git plumbing and a temporary index; they never checkout a working tree.")
     finally:
         shutil.rmtree(repo, ignore_errors=True)
