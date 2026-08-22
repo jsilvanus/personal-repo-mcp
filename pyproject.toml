@@ -23,6 +23,7 @@ test = [
 
 [project.scripts]
 personal-repo-mcp = "personal_repo_mcp.main:main"
+mcp-config = "personal_repo_mcp.admin:main"
 
 [build-system]
 requires = ["hatchling"]

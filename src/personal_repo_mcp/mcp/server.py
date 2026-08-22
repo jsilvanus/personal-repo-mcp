@@ -19,7 +19,8 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
         name="Personal Repo MCP",
         instructions=(
             "A persistent multi-repository Git workspace for AI agents. "
-            "Repositories are server-managed workspaces; GitHub is an upstream remote."
+            "Repositories are server-managed workspaces; GitHub is an upstream remote. "
+            "The administrator allow-list controls which repositories may be cloned."
         ),
         middleware=[
             make_secret_scrubber((settings.token, settings.github_pat)),
@@ -28,7 +29,7 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
 
     @mcp.tool()
     def get_repositories() -> list[dict[str, object]]:
-        """List repositories managed by this Personal Repo MCP server."""
+        """List repositories currently available as local managed workspaces."""
         return [repository.summary() for repository in repositories.list()]
 
     @mcp.tool()
@@ -36,6 +37,14 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
         """Get metadata for one managed repository by its stable id."""
         try:
             return repositories.get(repository).summary()
+        except RepositoryError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @mcp.tool()
+    def clone_repository(repository: str) -> dict[str, object]:
+        """Clone an allowed GitHub OWNER/REPOSITORY into persistent storage without changing the administrator allow-list."""
+        try:
+            return repositories.clone(repository).summary()
         except RepositoryError as exc:
             raise ValueError(str(exc)) from exc
 
