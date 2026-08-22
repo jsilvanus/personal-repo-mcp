@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark persistent Git object access and treeless write operations."""
+"""Benchmark persistent Git object access and treeless/worktree writes."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 
-def run(*args: str, cwd: Path, input: bytes | None = None) -> bytes:
+def run(*args: str, cwd: Path, input: bytes | None = None, env: dict[str, str] | None = None) -> bytes:
     result = subprocess.run(
         args,
         cwd=cwd,
@@ -23,12 +23,13 @@ def run(*args: str, cwd: Path, input: bytes | None = None) -> bytes:
         input=input,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
     )
     return result.stdout
 
 
-def git(*args: str, cwd: Path, input: bytes | None = None) -> bytes:
-    return run("git", *args, cwd=cwd, input=input)
+def git(*args: str, cwd: Path, input: bytes | None = None, env: dict[str, str] | None = None) -> bytes:
+    return run("git", *args, cwd=cwd, input=input, env=env)
 
 
 def make_repo(files: int) -> tuple[Path, list[str]]:
@@ -113,22 +114,33 @@ def treeless_edit(repo: Path, ref: str, path: str, suffix: str, message: str) ->
     base_commit = git("rev-parse", ref, cwd=repo).decode().strip()
     blob = tree_for_path(repo, base_commit, path)
     original = git("cat-file", "blob", blob, cwd=repo)
-    new_content = original + suffix.encode()
-    new_blob = git("hash-object", "-w", "--stdin", cwd=repo, input=new_content).decode().strip()
+    new_blob = git("hash-object", "-w", "--stdin", cwd=repo, input=original + suffix.encode()).decode().strip()
 
-    index = tempfile.NamedTemporaryFile(prefix="hot-git-index-", delete=False)
-    index.close()
-    index_path = Path(index.name)
-    env = {"GIT_INDEX_FILE": str(index_path)}
+    index_path = Path(tempfile.mktemp(prefix="hot-git-index-"))
+    env = {**os.environ, "GIT_INDEX_FILE": str(index_path)}
     try:
-        full_env = {**os.environ, **env}
-        subprocess.run(["git", "read-tree", base_commit], cwd=repo, env=full_env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["git", "update-index", "--add", "--cacheinfo", "100644", new_blob, path], cwd=repo, env=full_env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        new_tree = subprocess.run(["git", "write-tree"], cwd=repo, env=full_env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stdout.strip()
+        git("read-tree", base_commit, cwd=repo, env=env)
+        git("update-index", "--add", "--cacheinfo", "100644", new_blob, path, cwd=repo, env=env)
+        new_tree = git("write-tree", cwd=repo, env=env).decode().strip()
     finally:
         index_path.unlink(missing_ok=True)
 
     return git("commit-tree", new_tree, "-p", base_commit, "-m", message, cwd=repo).decode().strip()
+
+
+def worktree_edit(repo: Path, ref: str, path: str, suffix: str, message: str) -> str:
+    """Equivalent edit using a real checkout/worktree."""
+    worktree = Path(tempfile.mkdtemp(prefix="hot-git-worktree-"))
+    try:
+        git("clone", "-q", str(repo), str(worktree), cwd=repo.parent)
+        git("checkout", "-q", ref, cwd=worktree)
+        target = worktree / path
+        target.write_bytes(target.read_bytes() + suffix.encode())
+        git("add", path, cwd=worktree)
+        git("commit", "-q", "-m", message, cwd=worktree)
+        return git("rev-parse", "HEAD", cwd=worktree).decode().strip()
+    finally:
+        shutil.rmtree(worktree, ignore_errors=True)
 
 
 def cas_update(repo: Path, ref: str, expected: str, new_value: str) -> bool:
@@ -141,12 +153,21 @@ def cas_update(repo: Path, ref: str, expected: str, new_value: str) -> bool:
     return result.returncode == 0
 
 
+def unconditional_update(repo: Path, ref: str, new_value: str) -> bool:
+    result = subprocess.run(
+        ["git", "update-ref", ref, new_value],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return result.returncode == 0
+
+
 def benchmark_reads(repo: Path, objects: list[str], reads: int) -> tuple[float, float, int]:
     sample = [random.choice(objects) for _ in range(reads)]
     started = time.perf_counter()
     total = sum(len(read_one_process(repo, obj)) for obj in sample)
     cold = time.perf_counter() - started
-
     worker = CatFileWorker(repo)
     try:
         started = time.perf_counter()
@@ -158,20 +179,22 @@ def benchmark_reads(repo: Path, objects: list[str], reads: int) -> tuple[float, 
     return cold, hot, total
 
 
-def benchmark_writes(repo: Path, count: int) -> tuple[float, int]:
+def benchmark_writes(repo: Path, count: int) -> tuple[float, float]:
     started = time.perf_counter()
-    commits = []
     for i in range(count):
-        commits.append(treeless_edit(repo, "HEAD", "file-000000.txt", f"edit {i}\n", f"benchmark edit {i}"))
-    return time.perf_counter() - started, len(commits)
+        treeless_edit(repo, "HEAD", "file-000000.txt", f"edit {i}\n", f"treeless edit {i}")
+    treeless_time = time.perf_counter() - started
+
+    started = time.perf_counter()
+    for i in range(count):
+        worktree_edit(repo, "HEAD", "file-000000.txt", f"edit {i}\n", f"worktree edit {i}")
+    worktree_time = time.perf_counter() - started
+    return treeless_time, worktree_time
 
 
-def benchmark_cas(repo: Path, workers: int) -> tuple[float, int, int]:
+def benchmark_cas(repo: Path, workers: int) -> tuple[float, int, int, float, int]:
     base = git("rev-parse", "HEAD", cwd=repo).decode().strip()
     ref = "refs/heads/bench-cas"
-    # The expected old value must actually be the current value of the ref.
-    # Initializing it here makes the race meaningful: exactly one competing
-    # update should observe `base` and win; the others should conflict.
     git("update-ref", ref, base, cwd=repo)
     candidates = [
         treeless_edit(repo, base, "file-000001.txt", f"worker {i}\n", f"worker {i}")
@@ -180,9 +203,14 @@ def benchmark_cas(repo: Path, workers: int) -> tuple[float, int, int]:
     started = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(lambda commit: cas_update(repo, ref, base, commit), candidates))
-    elapsed = time.perf_counter() - started
-    succeeded = sum(results)
-    return elapsed, succeeded, len(results) - succeeded
+    cas_time = time.perf_counter() - started
+
+    git("update-ref", ref, base, cwd=repo)
+    started = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        results_unconditional = list(pool.map(lambda commit: unconditional_update(repo, ref, commit), candidates))
+    unconditional_time = time.perf_counter() - started
+    return cas_time, sum(results), len(results) - sum(results), unconditional_time, sum(results_unconditional)
 
 
 def main() -> None:
@@ -209,19 +237,21 @@ def main() -> None:
         print(f"  speedup:                {cold / hot:.2f}x")
         print(f"  bytes:                  {total:,}")
 
-        write_time, write_count = benchmark_writes(repo, args.writes)
-        print("\nTREeless WRITE")
-        print(f"  edits + commits:        {write_count}")
-        print(f"  time:                   {write_time:.3f}s")
-        print(f"  per edit:               {write_time / write_count:.3f}s")
+        treeless_time, worktree_time = benchmark_writes(repo, args.writes)
+        print("\nWRITE")
+        print(f"  treeless Git plumbing:  {treeless_time:.3f}s ({treeless_time / args.writes:.3f}s/edit)")
+        print(f"  worktree checkout:      {worktree_time:.3f}s ({worktree_time / args.writes:.3f}s/edit)")
+        print(f"  treeless speedup:       {worktree_time / treeless_time:.2f}x")
 
-        cas_time, succeeded, conflicted = benchmark_cas(repo, args.workers)
-        print("\nCONCURRENT CAS")
+        cas_time, succeeded, conflicted, unconditional_time, unconditional_successes = benchmark_cas(repo, args.workers)
+        print("\nCONCURRENT REF UPDATES")
         print(f"  workers:                {args.workers}")
-        print(f"  time:                   {cas_time:.3f}s")
-        print(f"  succeeded:              {succeeded}")
-        print(f"  conflicts:              {conflicted}")
-        print("\nNote: benchmark uses Git plumbing and temporary indexes; no working-tree checkout is used for edits.")
+        print(f"  CAS time:               {cas_time:.3f}s")
+        print(f"  CAS succeeded:          {succeeded}")
+        print(f"  CAS conflicts:          {conflicted}")
+        print(f"  unconditional time:     {unconditional_time:.3f}s")
+        print(f"  unconditional writes:   {unconditional_successes}")
+        print("\nNote: treeless edits use Git plumbing and a temporary index; they never checkout a working tree.")
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
