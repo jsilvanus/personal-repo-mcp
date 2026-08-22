@@ -3,9 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .paths import FileSystemError
-from .writer import content_hash, _atomic_write
-from .paths import relative_path, resolve_repository_path
+from .paths import FileSystemError, relative_path, resolve_repository_path
+from .writer import _atomic_write, content_hash
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
@@ -22,47 +21,43 @@ def apply_unified_diff(workspace: Path, path: str, patch: str, *, expected_hash:
 
     lines = original.splitlines(keepends=True)
     patch_lines = patch.splitlines(keepends=True)
-    hunks = []
+    hunks: list[tuple[int, list[str], list[str]]] = []
     i = 0
     while i < len(patch_lines):
-        line = patch_lines[i].rstrip("\r\n")
-        match = _HUNK.match(line)
-        if match:
-            old_start = int(match.group(1))
-            old_count = int(match.group(2) or 1)
-            new_start = int(match.group(3))
-            new_count = int(match.group(4) or 1)
-            body = []
+        match = _HUNK.match(patch_lines[i].rstrip("\r\n"))
+        if not match:
             i += 1
-            while i < len(patch_lines) and not patch_lines[i].startswith("@@ "):
-                current = patch_lines[i]
-                if current.startswith((" ", "+", "-")):
-                    body.append(current)
-                elif current.startswith("\\ No newline at end of file"):
-                    i += 1
-                    continue
-                else:
-                    raise FileSystemError("Invalid unified diff hunk")
-                i += 1
-            old_lines = [x[1:] for x in body if x.startswith((" ", "-"))]
-            new_lines = [x[1:] for x in body if x.startswith((" ", "+"))]
-            if len(old_lines) != old_count or len(new_lines) != new_count:
-                raise FileSystemError("Unified diff hunk line counts do not match")
-            hunks.append((old_start, old_lines, new_lines))
             continue
+        old_start = int(match.group(1))
+        old_count = int(match.group(2) or 1)
+        new_count = int(match.group(4) or 1)
+        body: list[str] = []
         i += 1
+        while i < len(patch_lines) and not patch_lines[i].startswith("@@ "):
+            current = patch_lines[i]
+            if current.startswith((" ", "+", "-")):
+                body.append(current)
+            elif current.startswith("\\ No newline at end of file"):
+                i += 1
+                continue
+            else:
+                raise FileSystemError("Invalid unified diff hunk")
+            i += 1
+        old_lines = [x[1:] for x in body if x.startswith((" ", "-"))]
+        new_lines = [x[1:] for x in body if x.startswith((" ", "+"))]
+        if len(old_lines) != old_count or len(new_lines) != new_count:
+            raise FileSystemError("Unified diff hunk line counts do not match")
+        hunks.append((old_start, old_lines, new_lines))
 
     if not hunks:
         raise FileSystemError("Patch contains no unified diff hunks")
 
-    output = []
+    output: list[str] = []
     cursor = 0
     for old_start, old_lines, new_lines in hunks:
         index = old_start - 1
         if index < cursor or index > len(lines):
             raise FileSystemError("Unified diff hunk is out of order or outside the file")
-        if lines[cursor:index] != lines[cursor:index]:
-            raise FileSystemError("Invalid unified diff")
         output.extend(lines[cursor:index])
         if lines[index:index + len(old_lines)] != old_lines:
             raise FileSystemError(f"Unified diff context does not match at line {old_start}")
