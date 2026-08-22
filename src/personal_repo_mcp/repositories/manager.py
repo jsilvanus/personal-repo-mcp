@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..config import RepositoryConfig
 from ..git.auth import git_environment
+from ..git.backend import HotGitBackend, RepositoryBackend
 from .model import Repository
 from .paths import RepositoryPathError, ensure_contained
 
@@ -15,11 +16,21 @@ class RepositoryError(RuntimeError):
 
 
 class RepositoryManager:
-    """Owns stable workspaces and enforces the administrator's repository allow-list."""
+    """Owns stable workspaces, allow-list enforcement, and optional hot-git workers."""
 
-    def __init__(self, root: Path, configs: tuple[RepositoryConfig, ...], patterns: tuple[str, ...] = ()):
+    def __init__(
+        self,
+        root: Path,
+        configs: tuple[RepositoryConfig, ...],
+        patterns: tuple[str, ...] = (),
+        backend: str = "git",
+    ):
         self._root = root.resolve()
         self._patterns = tuple(patterns)
+        if backend not in {"git", "hot-git"}:
+            raise RepositoryError(f"Unsupported Git backend: {backend}")
+        self._backend = backend
+        self._hot_backends: dict[str, HotGitBackend] = {}
         self._repositories = {
             config.id: Repository(id=config.id, name=config.name, remote=config.remote, workspace=config.workspace)
             for config in configs
@@ -28,6 +39,10 @@ class RepositoryManager:
     @property
     def root(self) -> Path:
         return self._root
+
+    @property
+    def backend_name(self) -> str:
+        return self._backend
 
     def list(self) -> list[Repository]:
         return sorted(self._repositories.values(), key=lambda repo: repo.id)
@@ -45,6 +60,26 @@ class RepositoryManager:
 
     def allowed_patterns(self) -> tuple[str, ...]:
         return self._patterns
+
+    def backend(self, repository_id: str) -> RepositoryBackend:
+        repository = self.get(repository_id)
+        if not repository.initialized:
+            raise RepositoryError(f"Repository is not prepared: {repository_id}")
+        if self._backend == "git":
+            from ..git.backend import GitBackend
+
+            return GitBackend(repository.workspace)
+        hot = self._hot_backends.get(repository_id)
+        if hot is None:
+            hot = HotGitBackend.open(repository.workspace)
+            self._hot_backends[repository_id] = hot
+        return hot
+
+    def close(self) -> None:
+        backends = list(self._hot_backends.values())
+        self._hot_backends.clear()
+        for backend in backends:
+            backend.close()
 
     def prepare_all(self) -> None:
         for repository in self.list():
