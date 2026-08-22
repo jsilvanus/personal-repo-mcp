@@ -15,6 +15,7 @@ async def test_phase_one_tools_are_registered() -> None:
         token="secret",
         allowed_hosts=("127.0.0.1:*",),
         allowed_origins=("http://127.0.0.1:*",),
+        repository_root=Path("/tmp"),
         repositories=(
             RepositoryConfig(
                 id="demo",
@@ -24,7 +25,7 @@ async def test_phase_one_tools_are_registered() -> None:
             ),
         ),
     )
-    mcp = create_mcp(settings, RepositoryManager(settings.repositories))
+    mcp = create_mcp(settings, RepositoryManager(settings.repository_root, settings.repositories))
     tools = await mcp.list_tools()
     names = {tool.name for tool in tools}
     assert {"get_repositories", "get_repository", "prepare_repository"} <= names
