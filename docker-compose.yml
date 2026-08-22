@@ -2,17 +2,21 @@ services:
   personal-repo-mcp:
     build: .
     restart: unless-stopped
+    stop_grace_period: 30s
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      PERSONAL_REPO_MCP_TOKEN: ${PERSONAL_REPO_MCP_TOKEN:?set PERSONAL_REPO_MCP_TOKEN}
-      PERSONAL_REPO_MCP_GITHUB_PAT: ${PERSONAL_REPO_MCP_GITHUB_PAT:?set PERSONAL_REPO_MCP_GITHUB_PAT}
+      PERSONAL_REPO_MCP_TOKEN_FILE: /run/secrets/mcp_token
+      PERSONAL_REPO_MCP_GITHUB_PAT_FILE: /run/secrets/github_pat
       PERSONAL_REPO_MCP_CONFIG: /etc/personal-repo-mcp/repositories.json
       PERSONAL_REPO_MCP_ROOT: /srv/personal-repo-mcp/repositories
       PERSONAL_REPO_MCP_ALLOWED_HOSTS: ${PERSONAL_REPO_MCP_ALLOWED_HOSTS:?set PERSONAL_REPO_MCP_ALLOWED_HOSTS}
       PERSONAL_REPO_MCP_ALLOWED_ORIGINS: ${PERSONAL_REPO_MCP_ALLOWED_ORIGINS:?set PERSONAL_REPO_MCP_ALLOWED_ORIGINS}
       PERSONAL_REPO_MCP_HOST: 0.0.0.0
       PERSONAL_REPO_MCP_PORT: 8000
+    secrets:
+      - mcp_token
+      - github_pat
     volumes:
       - ./config/repositories.json:/etc/personal-repo-mcp/repositories.json:ro
       - ./repositories:/srv/personal-repo-mcp/repositories
@@ -26,3 +30,9 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+secrets:
+  mcp_token:
+    file: ./secrets/mcp_token
+  github_pat:
+    file: ./secrets/github_pat
