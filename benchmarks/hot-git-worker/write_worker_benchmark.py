@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""Compare Git plumbing writes with a hot, treeless Git object worker.
-
-The hot worker deliberately avoids a working tree and Git process startup for
-blob/tree/commit creation. It writes standard Git loose objects directly and
-keeps one `git update-ref --stdin` process alive for ref updates. This is a
-benchmark/prototype, not production repository mutation code.
-"""
+"""Compare Git plumbing writes with a hot, treeless Git object worker."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import os
-import random
 import shutil
 import subprocess
 import tempfile
@@ -21,7 +14,7 @@ import zlib
 from pathlib import Path
 
 
-def git(*args: str, cwd: Path, input: bytes | None = None) -> bytes:
+def git(*args: str, cwd: Path, input: bytes | None = None, env: dict[str, str] | None = None) -> bytes:
     result = subprocess.run(
         ["git", *args],
         cwd=cwd,
@@ -29,6 +22,7 @@ def git(*args: str, cwd: Path, input: bytes | None = None) -> bytes:
         input=input,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
     )
     return result.stdout
 
@@ -40,10 +34,7 @@ def make_repo(files: int) -> Path:
         git("config", "user.name", "benchmark", cwd=root)
         git("config", "user.email", "benchmark@example.invalid", cwd=root)
         for i in range(files):
-            (root / f"file-{i:06d}.txt").write_text(
-                f"benchmark file {i}\n" + ("payload " * 20) + "\n",
-                encoding="utf-8",
-            )
+            (root / f"file-{i:06d}.txt").write_text(f"benchmark file {i}\n" + ("payload " * 20) + "\n", encoding="utf-8")
         git("add", ".", cwd=root)
         git("commit", "-q", "-m", "benchmark", cwd=root)
         if git("rev-parse", "--show-object-format", cwd=root).decode().strip() != "sha1":
@@ -95,8 +86,8 @@ def root_tree_entries(repo: Path, tree_oid: str) -> list[tuple[str, str, str]]:
 
 def build_root_tree(repo: Path, base_tree: str, path: str, new_blob: str) -> str:
     entries = root_tree_entries(repo, base_tree)
-    found = False
     updated: list[tuple[str, str, str]] = []
+    found = False
     for mode, name, oid in entries:
         if name == path:
             updated.append((mode, name, new_blob))
@@ -148,6 +139,10 @@ class UpdateRefWorker:
 
     def update(self, ref: str, new_oid: str, old_oid: str) -> None:
         self.stdin.write(f"update {ref} {new_oid} {old_oid}\n")
+        self.stdin.flush()
+        # update-ref --stdin requires an explicit transaction end before it
+        # performs the command when used in this protocol.
+        self.stdin.write("start\nprepare\ncommit\n")
         self.stdin.flush()
 
     def close(self) -> None:
@@ -203,7 +198,6 @@ def main() -> None:
             base = plumbing_edit(repo, base, i)
         plumbing_time = time.perf_counter() - started
 
-        # Reset the benchmark ref and use a single persistent update-ref process.
         base = git("rev-parse", "HEAD", cwd=repo).decode().strip()
         git("update-ref", "refs/heads/hot-write", base, cwd=repo)
         worker_started = time.perf_counter()
