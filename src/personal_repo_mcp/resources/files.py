@@ -7,6 +7,7 @@ from mcp.server import Context, MCPServer
 
 from ..repositories import RepositoryError, RepositoryManager
 from ..repositories.paths import RepositoryPathError, ensure_contained
+from ..filesystem.paths import nested_repository_root
 
 
 def _path(workspace: Path, path: str) -> Path:
@@ -44,10 +45,16 @@ def register_file_resources(mcp: MCPServer, repositories: RepositoryManager) -> 
             text = data.decode("utf-8")
         except UnicodeDecodeError:
             raise ValueError("Binary files are not exposed as text file resources yet")
+        nested = nested_repository_root(repo.workspace, target)
         return {
             "uri": f"repo://{repository}/file/{path.lstrip('/')}",
             "path": path,
             "size": len(data),
             "sha256": hashlib.sha256(data).hexdigest(),
             "content": text,
+            "nested_repository": nested is not None,
+            "nested_repository_path": (
+                nested.relative_to(repo.workspace.resolve()).as_posix() if nested is not None else None
+            ),
+            "writable": nested is None,
         }
