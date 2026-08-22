@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from mcp.server import MCPServer
+from mcp.server import Context, MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from ..config import Settings
 from ..repositories import RepositoryError, RepositoryManager
 from ..resources import register_resources
+from ..resources.invalidation import notify_repository_set_changed
 from ..security.secrets import make_secret_scrubber
 from ..tools.chain import register_chain_tools
 from ..tools.files import register_file_tools
@@ -41,10 +42,12 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
             raise ValueError(str(exc)) from exc
 
     @mcp.tool()
-    def clone_repository(repository: str) -> dict[str, object]:
+    async def clone_repository(repository: str, ctx: Context) -> dict[str, object]:
         """Clone an allowed GitHub OWNER/REPOSITORY into persistent storage without changing the administrator allow-list."""
         try:
-            return repositories.clone(repository).summary()
+            result = repositories.clone(repository).summary()
+            await notify_repository_set_changed(ctx)
+            return result
         except RepositoryError as exc:
             raise ValueError(str(exc)) from exc
 
