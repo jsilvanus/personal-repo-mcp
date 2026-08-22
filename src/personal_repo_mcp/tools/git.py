@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from mcp.server import MCPServer
 
+from hotgit import Change
+
 from ..git import (
     GitError, GitRunner, abort_merge, abort_rebase, add, blame, changed_files, commit,
     conflict_file, conflicted_files, continue_merge, continue_rebase, create_branch,
     delete_branch, diff, fetch, list_branches, log, merge, pull, push, rebase, remotes,
     resolve_conflict, show, state, status, switch, unstage,
 )
+from ..git.backend import BackendError
 from ..repositories import RepositoryError, RepositoryManager
 
 
@@ -25,6 +28,54 @@ def register_git_tools(mcp: MCPServer, repositories: RepositoryManager) -> None:
         if not value or value.startswith("-") or "\x00" in value:
             raise ValueError("Invalid Git revision")
         return value
+
+    @mcp.tool(name="git_read_file")
+    def git_read_file(repository: str, path: str, revision: str = "refs/heads/main") -> dict[str, object]:
+        """Read a file from a repository revision through the configured repository backend."""
+        if not path or path.startswith("/") or "\x00" in path:
+            raise ValueError("Invalid repository path")
+        try:
+            data = repositories.backend(repository).read_file(guarded_revision(revision), path)
+            return {"path": path, "revision": revision, "content": data.decode("utf-8", errors="replace"), "bytes": len(data)}
+        except (BackendError, RepositoryError, ValueError) as exc:
+            raise ValueError(str(exc)) from exc
+
+    @mcp.tool(name="git_edit")
+    def git_edit(
+        repository: str,
+        changes: list[dict[str, object]],
+        message: str,
+        ref: str = "refs/heads/main",
+        expected_ref: str | None = None,
+    ) -> dict[str, object]:
+        """Apply a multi-file treeless edit through the configured repository backend."""
+        if not changes:
+            raise ValueError("changes must not be empty")
+        normalized: list[Change] = []
+        for item in changes:
+            path = str(item.get("path", ""))
+            if not path or path.startswith("/") or "\x00" in path:
+                raise ValueError(f"Invalid repository path: {path!r}")
+            if bool(item.get("delete", False)):
+                normalized.append(Change(path, None, str(item.get("mode", "100644"))))
+            else:
+                content = item.get("content", "")
+                if not isinstance(content, str):
+                    raise ValueError("change content must be text")
+                normalized.append(Change(path, content.encode("utf-8"), str(item.get("mode", "100644"))))
+        try:
+            result = repositories.backend(repository).edit(
+                guarded_revision(ref), normalized, message, expected_ref=expected_ref,
+            )
+            return {
+                "ref": result.ref,
+                "base": result.base,
+                "commit": result.commit,
+                "tree": result.tree,
+                "changed_paths": list(result.changed_paths),
+            }
+        except (BackendError, RepositoryError, ValueError) as exc:
+            raise ValueError(str(exc)) from exc
 
     @mcp.tool(name="git_status")
     def git_status(repository: str) -> dict[str, object]:
