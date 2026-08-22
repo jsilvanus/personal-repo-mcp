@@ -1,6 +1,6 @@
 # personal-repo-mcp
 
-A self-hosted, multi-repository MCP server for AI agents. It gives an agent a persistent Git workspace on your own VPS, with controlled read/write access to administrator-approved repositories and normal Git operations.
+A self-hosted, multi-repository MCP server for AI agents. It gives an agent a persistent Git workspace on your own VPS, with controlled access to administrator-approved repositories and normal Git operations.
 
 **Version 1.0.0 — MVP**
 
@@ -23,6 +23,8 @@ MCP server
     v
 persistent workspace
 ```
+
+The workspace is an ordinary Git repository. GitHub remains an upstream remote; the MCP server is the persistent local workspace and control boundary.
 
 ## MCP help resources
 
@@ -58,6 +60,57 @@ The help resources are intentionally separate from `tools/list`: the MCP tool li
 - Secret scrubbing from MCP output
 - Git submodule safeguards
 - Docker deployment
+- Optional **hot-git** backend for persistent, treeless repository reads and edits
+
+## Git backends
+
+The existing Git command backend remains the default compatibility path.
+
+The new hot-git backend can be enabled with:
+
+```bash
+export PERSONAL_REPO_MCP_GIT_BACKEND=hot-git
+```
+
+The dependency is declared in `pyproject.toml` and is installed as a normal Python package; it is **not a Git submodule**.
+
+The backend boundary is deliberately small:
+
+```text
+MCP tool
+   |
+   v
+Repository backend
+   |
+   +-- Git backend
+   |
+   +-- hot-git backend
+          |
+          +-- persistent object reader
+          +-- treeless object/tree/commit edits
+          +-- Git CAS ref publication
+```
+
+When hot-git is selected, each repository gets one lazily-created long-lived backend instance. It is shared by callers and closed with the server. This keeps the persistent `cat-file --batch` reader alive without creating one process per MCP request.
+
+The first integrated operations are:
+
+- `git_read_file` — read a file from a ref or commit through the configured backend;
+- `git_edit` — perform a multi-file treeless edit and publish it with an expected-ref CAS.
+
+The existing Git command tools remain available during the migration. Operations that depend on a working tree or Git's higher-level merge/rebase machinery continue to use the compatibility backend.
+
+### Chained edits
+
+`git_edit` returns the resulting commit. A caller can use that commit as the expected base for the next edit:
+
+```text
+A(base=X) -> commit A
+B(base=A) -> commit B
+C(base=B) -> commit C
+```
+
+This is the foundation for integrating the backend with `chain_command` without allowing concurrent writers to silently overwrite each other.
 
 ## Deployment
 
@@ -70,6 +123,8 @@ docker compose up -d --build
 ```
 
 `mcp-config add repo` changes only the administrator allow-list. It does **not** clone repositories. The agent clones an allowed repository through the MCP when needed.
+
+For hot-git mode, the normal Python dependency installation installs the library. No submodule checkout is required.
 
 See the deployment documentation in `docs/` for persistent storage, credentials, HTTPS, and configuration details.
 
