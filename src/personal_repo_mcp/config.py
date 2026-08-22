@@ -28,7 +28,14 @@ class Settings:
     host: str
     port: int
     token: str | None
+    allowed_hosts: tuple[str, ...]
+    allowed_origins: tuple[str, ...]
     repositories: tuple[RepositoryConfig, ...]
+
+
+def _csv(value: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    items = tuple(item.strip() for item in value.split(",") if item.strip())
+    return items or default
 
 
 def _repository_config(raw: Any, root: Path) -> RepositoryConfig:
@@ -58,7 +65,9 @@ def _repository_config(raw: Any, root: Path) -> RepositoryConfig:
 
 
 def load_settings() -> Settings:
-    root = Path(os.getenv("PERSONAL_REPO_MCP_ROOT", "/srv/personal-repo-mcp/repositories")).resolve()
+    root = Path(
+        os.getenv("PERSONAL_REPO_MCP_ROOT", "/srv/personal-repo-mcp/repositories")
+    ).resolve()
     root.mkdir(parents=True, exist_ok=True)
 
     config_path = Path(
@@ -102,5 +111,13 @@ def load_settings() -> Settings:
         host=os.getenv("PERSONAL_REPO_MCP_HOST", "127.0.0.1"),
         port=port,
         token=token,
+        allowed_hosts=_csv(
+            os.getenv("PERSONAL_REPO_MCP_ALLOWED_HOSTS", ""),
+            ("127.0.0.1:*", "localhost:*", "[::1]:*"),
+        ),
+        allowed_origins=_csv(
+            os.getenv("PERSONAL_REPO_MCP_ALLOWED_ORIGINS", ""),
+            ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"),
+        ),
         repositories=repositories,
     )
