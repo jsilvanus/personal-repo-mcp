@@ -4,7 +4,8 @@ import os
 import shutil
 from pathlib import Path
 
-from mcp.server import Context, MCPServer
+from mcp.server.mcpserver import Context
+from mcp.server import MCPServer
 
 from ..repositories import RepositoryManager
 from .model import system_info_uri, system_repositories_uri, system_storage_uri
