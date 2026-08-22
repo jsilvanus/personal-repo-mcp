@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mcp.server import Context
+from mcp.server.mcpserver import Context
 
 from .model import file_uri, git_uri, system_storage_uri
 
