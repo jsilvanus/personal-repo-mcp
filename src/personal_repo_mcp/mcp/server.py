@@ -1,22 +1,20 @@
 from __future__ import annotations
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 
 from ..config import Settings
 from ..repositories import RepositoryError, RepositoryManager
 
 
-def create_mcp(settings: Settings, repositories: RepositoryManager) -> FastMCP:
+def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer:
     """Create the MCP server and register Phase 1 tools."""
-    mcp = FastMCP(
+    mcp = MCPServer(
         name="Personal Repo MCP",
         instructions=(
             "A persistent multi-repository Git workspace for AI agents. "
             "Repositories are server-managed workspaces; GitHub is an upstream remote."
         ),
-        stateless_http=True,
-        json_response=True,
-        streamable_http_path="/",
     )
 
     @mcp.tool()
@@ -41,3 +39,12 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> FastMCP:
             raise ValueError(str(exc)) from exc
 
     return mcp
+
+
+def transport_security(settings: Settings) -> TransportSecuritySettings:
+    """Build MCP DNS-rebinding protection for the configured deployment host."""
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(settings.allowed_hosts),
+        allowed_origins=list(settings.allowed_origins),
+    )
