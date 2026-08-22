@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from .auth import git_environment
+
 
 class GitError(RuntimeError):
     def __init__(self, message: str, *, code: int | None = None, stdout: str = "", stderr: str = ""):
@@ -28,6 +30,7 @@ class GitRunner:
             result = subprocess.run(
                 command,
                 cwd=self.workspace,
+                env=git_environment(),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -43,7 +46,15 @@ class GitRunner:
 
     def run_bytes(self, *args: str, check: bool = True) -> bytes:
         try:
-            result = subprocess.run(["git", *args], cwd=self.workspace, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            result = subprocess.run(
+                ["git", *args],
+                cwd=self.workspace,
+                env=git_environment(),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
         except FileNotFoundError as exc:
             raise GitError("git executable is not installed") from exc
         if check and result.returncode:

@@ -9,7 +9,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s\n' \
+       '#!/bin/sh' \
+       'case "$1" in' \
+       '  *Username*) printf "%s\\n" "x-access-token" ;;' \
+       '  *) printf "%s\\n" "${PERSONAL_REPO_MCP_GITHUB_PAT}" ;;' \
+       'esac' > /usr/local/bin/personal-repo-mcp-git-askpass \
+    && chmod 0555 /usr/local/bin/personal-repo-mcp-git-askpass
 
 WORKDIR /app
 

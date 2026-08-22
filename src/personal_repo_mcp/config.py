@@ -23,11 +23,12 @@ class RepositoryConfig:
 
 @dataclass(frozen=True, slots=True)
 class Settings:
-    """Application configuration loaded from environment variables."""
+    """Application configuration loaded from environment variables and JSON."""
 
     host: str
     port: int
-    token: str | None
+    token: str
+    github_pat: str
     allowed_hosts: tuple[str, ...]
     allowed_origins: tuple[str, ...]
     repository_root: Path
@@ -65,6 +66,37 @@ def _repository_config(raw: Any, root: Path) -> RepositoryConfig:
     return RepositoryConfig(id=repo_id, name=name, remote=remote, workspace=workspace)
 
 
+def _load_repository_config(config_path: Path, inline: str) -> list[Any]:
+    if config_path.exists():
+        try:
+            raw = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigurationError(
+                f"Cannot read repository configuration: {config_path}"
+            ) from exc
+    else:
+        try:
+            raw = json.loads(inline)
+        except json.JSONDecodeError as exc:
+            raise ConfigurationError(
+                "PERSONAL_REPO_MCP_REPOSITORIES is not valid JSON"
+            ) from exc
+
+    # Versioned object is the production format. Keep accepting the legacy array
+    # so existing non-Docker deployments can migrate without a flag day.
+    if isinstance(raw, dict):
+        version = raw.get("version", 1)
+        if version != 1:
+            raise ConfigurationError(f"Unsupported repository configuration version: {version}")
+        raw = raw.get("repositories")
+
+    if not isinstance(raw, list):
+        raise ConfigurationError(
+            "Repository configuration must be an object with a repositories array"
+        )
+    return raw
+
+
 def load_settings() -> Settings:
     root = Path(
         os.getenv("PERSONAL_REPO_MCP_ROOT", "/srv/personal-repo-mcp/repositories")
@@ -74,21 +106,10 @@ def load_settings() -> Settings:
     config_path = Path(
         os.getenv("PERSONAL_REPO_MCP_CONFIG", "/etc/personal-repo-mcp/repositories.json")
     )
-
-    if config_path.exists():
-        try:
-            raw = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise ConfigurationError(f"Cannot read repository configuration: {config_path}") from exc
-    else:
-        inline = os.getenv("PERSONAL_REPO_MCP_REPOSITORIES", "[]")
-        try:
-            raw = json.loads(inline)
-        except json.JSONDecodeError as exc:
-            raise ConfigurationError("PERSONAL_REPO_MCP_REPOSITORIES is not valid JSON") from exc
-
-    if not isinstance(raw, list):
-        raise ConfigurationError("Repository configuration must be a JSON array")
+    raw = _load_repository_config(
+        config_path,
+        os.getenv("PERSONAL_REPO_MCP_REPOSITORIES", "[]"),
+    )
 
     repositories = tuple(_repository_config(item, root) for item in raw)
     ids = [repo.id for repo in repositories]
@@ -108,10 +129,17 @@ def load_settings() -> Settings:
             "PERSONAL_REPO_MCP_TOKEN must be set for the remote HTTP server"
         )
 
+    github_pat = os.getenv("PERSONAL_REPO_MCP_GITHUB_PAT")
+    if not github_pat:
+        raise ConfigurationError(
+            "PERSONAL_REPO_MCP_GITHUB_PAT must be set for GitHub operations"
+        )
+
     return Settings(
         host=os.getenv("PERSONAL_REPO_MCP_HOST", "127.0.0.1"),
         port=port,
         token=token,
+        github_pat=github_pat,
         allowed_hosts=_csv(
             os.getenv("PERSONAL_REPO_MCP_ALLOWED_HOSTS", ""),
             ("127.0.0.1:*", "localhost:*", "[::1]:*"),
