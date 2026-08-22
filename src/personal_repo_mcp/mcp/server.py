@@ -16,6 +16,7 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> FastMCP:
         ),
         stateless_http=True,
         json_response=True,
+        streamable_http_path="/",
     )
 
     @mcp.tool()
