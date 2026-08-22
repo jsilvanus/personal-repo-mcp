@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ..config import RepositoryConfig
 from .model import Repository
+from .paths import RepositoryPathError, ensure_contained
 
 
 class RepositoryError(RuntimeError):
@@ -14,7 +15,8 @@ class RepositoryError(RuntimeError):
 class RepositoryManager:
     """Owns the mapping between stable repository ids and VPS workspaces."""
 
-    def __init__(self, configs: tuple[RepositoryConfig, ...]):
+    def __init__(self, root: Path, configs: tuple[RepositoryConfig, ...]):
+        self._root = root.resolve()
         self._repositories = {
             config.id: Repository(
                 id=config.id,
@@ -40,10 +42,16 @@ class RepositoryManager:
 
     def prepare(self, repository_id: str) -> Repository:
         repository = self.get(repository_id)
-        workspace = repository.workspace
+        try:
+            workspace = ensure_contained(self._root, repository.workspace)
+        except RepositoryPathError as exc:
+            raise RepositoryError(str(exc)) from exc
+
         workspace.parent.mkdir(parents=True, exist_ok=True)
 
         if repository.initialized:
+            if repository.workspace.resolve() != workspace:
+                raise RepositoryError(f"Repository workspace changed unexpectedly: {workspace}")
             return repository
 
         if workspace.exists() and any(workspace.iterdir()):
@@ -51,7 +59,6 @@ class RepositoryManager:
                 f"Workspace exists and is not a Git repository: {workspace}"
             )
 
-        workspace.parent.mkdir(parents=True, exist_ok=True)
         if workspace.exists() and not any(workspace.iterdir()):
             workspace.rmdir()
 
