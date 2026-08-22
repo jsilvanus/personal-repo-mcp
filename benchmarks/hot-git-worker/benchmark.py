@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Benchmark per-request Git object access against a persistent cat-file worker."""
-
+"""Benchmark persistent Git object access and treeless workflows."""
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import os
 import random
 import shutil
 import subprocess
@@ -12,187 +13,132 @@ import time
 from pathlib import Path
 
 
-def run(*args: str, cwd: Path) -> str:
-    result = subprocess.run(
-        args,
-        cwd=cwd,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    return result.stdout
+def run(args: list[str], cwd: Path, *, input: bytes | None = None, env=None) -> subprocess.CompletedProcess:
+    return subprocess.run(args, cwd=cwd, input=input, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, env=env)
 
 
-def git(*args: str, cwd: Path) -> str:
-    return run("git", *args, cwd=cwd)
+def git(*args: str, cwd: Path, input: bytes | None = None, env=None) -> bytes:
+    return run(["git", *args], cwd, input=input, env=env).stdout
 
 
-def make_repo(files: int) -> tuple[Path, list[str]]:
+def make_repo(files: int) -> tuple[Path, str, list[str]]:
     root = Path(tempfile.mkdtemp(prefix="hot-git-worker-"))
     try:
-        git("init", "-q", cwd=root)
+        run(["git", "init", "-q"], root)
         git("config", "user.name", "benchmark", cwd=root)
         git("config", "user.email", "benchmark@example.invalid", cwd=root)
-
         for i in range(files):
-            path = root / f"file-{i:06d}.txt"
-            path.write_text(
-                f"benchmark file {i}\n" + ("payload " * 20) + "\n",
-                encoding="utf-8",
-            )
-
+            path = root / f"d{i % 20}" / f"f{i}.txt"
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(f"file {i}\n" + ("payload " * 20) + "\n", encoding="utf-8")
         git("add", ".", cwd=root)
-        git("commit", "-q", "-m", "benchmark", cwd=root)
-
-        output = git("ls-tree", "-r", "HEAD", cwd=root)
-        objects = [
-            parts[2]
-            for line in output.splitlines()
-            if len(parts := line.split()) >= 3 and parts[1] == "blob"
-        ]
-        if not objects:
-            raise RuntimeError("repository contains no blob objects")
-        return root, objects
+        git("commit", "-qm", "benchmark", cwd=root)
+        head = git("rev-parse", "HEAD", cwd=root).decode().strip()
+        tree = git("ls-tree", "-r", "--name-only", "HEAD", cwd=root).decode().splitlines()
+        return root, head, tree
     except Exception:
         shutil.rmtree(root, ignore_errors=True)
         raise
 
 
-def read_one_process(repo: Path, object_id: str) -> bytes:
-    result = subprocess.run(
-        ["git", "cat-file", "blob", object_id],
-        cwd=repo,
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    return result.stdout
+class Batch:
+    """Persistent git cat-file --batch connection."""
+    def __init__(self, repo: Path):
+        self.p = subprocess.Popen(["git", "cat-file", "--batch"], cwd=repo,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert self.p.stdin and self.p.stdout
 
-
-def benchmark_cold(repo: Path, objects: list[str]) -> tuple[float, int]:
-    started = time.perf_counter()
-    total = sum(len(read_one_process(repo, object_id)) for object_id in objects)
-    return time.perf_counter() - started, total
-
-
-class CatFileWorker:
-    """Long-lived git cat-file --batch process."""
-
-    def __init__(self, repo: Path) -> None:
-        self.process = subprocess.Popen(
-            ["git", "cat-file", "--batch"],
-            cwd=repo,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        assert self.process.stdin is not None
-        assert self.process.stdout is not None
-        self.stdin = self.process.stdin
-        self.stdout = self.process.stdout
-
-    def read(self, object_id: str) -> bytes:
-        self.stdin.write((object_id + "\n").encode("ascii"))
-        self.stdin.flush()
-
-        header = self.stdout.readline()
-        if not header:
-            raise RuntimeError("git cat-file worker exited unexpectedly")
-        parts = header.split()
-        if len(parts) < 3 or parts[1] == b"missing":
-            raise RuntimeError(f"unexpected cat-file response: {header!r}")
-
-        size = int(parts[2])
-        data = self.stdout.read(size)
-        newline = self.stdout.read(1)
-        if len(data) != size or newline != b"\n":
-            raise RuntimeError("truncated cat-file response")
+    def read(self, oid: str) -> bytes:
+        self.p.stdin.write((oid + "\n").encode()); self.p.stdin.flush()
+        header = self.p.stdout.readline(); parts = header.split()
+        if len(parts) < 3 or parts[1] == b"missing": raise RuntimeError(header)
+        size = int(parts[2]); data = self.p.stdout.read(size); self.p.stdout.read(1)
         return data
 
-    def close(self) -> None:
-        if self.process.stdin:
-            self.process.stdin.close()
-        returncode = self.process.wait(timeout=5)
-        if returncode != 0:
-            stderr = self.process.stderr.read() if self.process.stderr else b""
-            raise RuntimeError(f"cat-file exited with {returncode}: {stderr!r}")
+    def close(self):
+        self.p.stdin.close(); self.p.wait(timeout=5)
 
 
-def benchmark_hot(repo: Path, objects: list[str]) -> tuple[float, int]:
-    worker = CatFileWorker(repo)
+def parse_tree(data: bytes) -> dict[str, tuple[str, str]]:
+    result = {}; i = 0
+    while i < len(data):
+        sp = data.index(b" ", i); nul = data.index(b"\0", sp)
+        name = data[sp + 1:nul].decode(); oid = data[nul + 1:nul + 21].hex()
+        result[name] = (data[i:sp].decode(), oid); i = nul + 21
+    return result
+
+
+def make_tree_reader(repo: Path, head: str):
+    root = git("rev-parse", f"{head}^{{tree}}", cwd=repo).decode().strip()
+    worker = Batch(repo); trees: dict[str, dict[str, tuple[str, str]]] = {}
+
+    def find(path: str) -> str:
+        oid = root
+        for part in path.split("/"):
+            if oid not in trees: trees[oid] = parse_tree(worker.read(oid))
+            oid = trees[oid][part][1]
+        return oid
+    return worker, find
+
+
+def cold_reads(repo: Path, head: str, paths: list[str]) -> tuple[float, int]:
+    start = time.perf_counter(); total = 0
+    for path in paths:
+        total += len(run(["git", "show", f"{head}:{path}"], repo).stdout)
+    return time.perf_counter() - start, total
+
+
+def hot_reads(repo: Path, head: str, paths: list[str]) -> tuple[float, int]:
+    worker, find = make_tree_reader(repo, head); start = time.perf_counter(); total = 0
     try:
-        started = time.perf_counter()
-        total = sum(len(worker.read(object_id)) for object_id in objects)
-        return time.perf_counter() - started, total
+        for path in paths: total += len(worker.read(find(path)))
+    finally: worker.close()
+    return time.perf_counter() - start, total
+
+
+def treeless_edit(repo: Path, head: str, paths: list[str]) -> tuple[float, str]:
+    index = Path(tempfile.mktemp(prefix="hot-git-index-")); env = os.environ.copy(); env["GIT_INDEX_FILE"] = str(index)
+    try:
+        run(["git", "read-tree", head], repo, env=env); start = time.perf_counter()
+        for path in paths:
+            old = run(["git", "show", f"{head}:{path}"], repo).stdout
+            new = old + b"\n# treeless edit\n"
+            blob = git("hash-object", "-w", "--stdin", cwd=repo, input=new).decode().strip()
+            run(["git", "update-index", "--add", "--cacheinfo", "100644", blob, path], repo, env=env)
+        tree = git("write-tree", cwd=repo, env=env).decode().strip()
+        commit = git("commit-tree", tree, "-p", head, "-m", "benchmark treeless edit", cwd=repo, env=env).decode().strip()
+        return time.perf_counter() - start, commit
     finally:
-        worker.close()
+        index.unlink(missing_ok=True)
 
 
-def benchmark_repeated(repo: Path, objects: list[str], rounds: int) -> tuple[float, int]:
-    worker = CatFileWorker(repo)
+def cas_test(repo: Path, head: str) -> tuple[int, int]:
+    a = treeless_edit(repo, head, ["d1/f1.txt"])[1]; b = treeless_edit(repo, head, ["d2/f2.txt"])[1]
+    ref = "refs/bench/cas"; git("update-ref", ref, head, cwd=repo)
+    r1 = subprocess.run(["git", "update-ref", ref, a, head], cwd=repo).returncode
+    r2 = subprocess.run(["git", "update-ref", ref, b, head], cwd=repo).returncode
+    subprocess.run(["git", "update-ref", "-d", ref], cwd=repo, check=True)
+    return r1, r2
+
+
+def main():
+    ap = argparse.ArgumentParser(); ap.add_argument("--files", type=int, default=1000); ap.add_argument("--reads", type=int, default=500); ap.add_argument("--edit-files", type=int, default=10); ap.add_argument("--workers", type=int, default=8); ap.add_argument("--seed", type=int, default=42); a = ap.parse_args()
+    random.seed(a.seed); repo, head, paths = make_repo(a.files)
     try:
-        sample = objects[: min(100, len(objects))]
-        started = time.perf_counter()
-        total = 0
-        for _ in range(rounds):
-            for object_id in sample:
-                total += len(worker.read(object_id))
-        return time.perf_counter() - started, total
-    finally:
-        worker.close()
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--files", type=int, default=1000)
-    parser.add_argument("--reads", type=int, default=500)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--repeat-rounds", type=int, default=10)
-    args = parser.parse_args()
-
-    if min(args.files, args.reads, args.repeat_rounds) < 1:
-        parser.error("--files, --reads and --repeat-rounds must be positive")
-
-    random.seed(args.seed)
-    repo, objects = make_repo(args.files)
-    try:
-        reads = [random.choice(objects) for _ in range(args.reads)]
-
-        setup_started = time.perf_counter()
-        git("gc", "--quiet", cwd=repo)
-        setup_elapsed = time.perf_counter() - setup_started
-
-        print(f"Repository: {repo}")
-        print(f"Files/blobs: {len(objects):,}")
-        print(f"Reads: {len(reads):,}")
-        print(f"Pack/GC setup: {setup_elapsed:.3f}s")
-        print()
-
-        cold_time, cold_bytes = benchmark_cold(repo, reads)
-        hot_time, hot_bytes = benchmark_hot(repo, reads)
-        repeated_time, repeated_bytes = benchmark_repeated(repo, objects, args.repeat_rounds)
-
-        print("One Git process per object")
-        print(f"  time:  {cold_time:.3f}s")
-        print(f"  bytes: {cold_bytes:,}")
-        print()
-        print("Persistent git cat-file --batch")
-        print(f"  time:  {hot_time:.3f}s")
-        print(f"  bytes: {hot_bytes:,}")
-        print()
-        print("Persistent worker, repeated 100-object working set")
-        print(f"  time:  {repeated_time:.3f}s")
-        print(f"  bytes: {repeated_bytes:,}")
-        print()
-
-        if hot_time > 0:
-            print(f"Cold / persistent ratio: {cold_time / hot_time:.2f}x")
-        print()
-        print("Note: this is an object-access microbenchmark, not an MCP benchmark.")
+        reads = [random.choice(paths) for _ in range(a.reads)]; edits = paths[:a.edit_files]; git("gc", "--quiet", cwd=repo)
+        cold, cb = cold_reads(repo, head, reads); hot, hb = hot_reads(repo, head, reads)
+        edit, commit = treeless_edit(repo, head, edits); cas = cas_test(repo, head)
+        chunks = [reads[i::a.workers] for i in range(a.workers)]; start = time.perf_counter()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=a.workers) as pool: times = list(pool.map(lambda c: hot_reads(repo, head, c)[0], chunks))
+        concurrent_time = time.perf_counter() - start
+        print(f"files={a.files} reads={a.reads} edits={a.edit_files} workers={a.workers}")
+        print(f"cold read_file:       {cold:.3f}s ({cb:,} bytes)")
+        print(f"hot object worker:    {hot:.3f}s ({hb:,} bytes), speedup={cold / hot:.2f}x")
+        print(f"treeless edit+commit: {edit:.3f}s ({commit[:12]})")
+        print(f"CAS competing refs:   {cas} (expected one 0, one non-zero)")
+        print(f"{a.workers} concurrent workers: {concurrent_time:.3f}s (sum={sum(times):.3f}s)")
     finally:
         shutil.rmtree(repo, ignore_errors=True)
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
