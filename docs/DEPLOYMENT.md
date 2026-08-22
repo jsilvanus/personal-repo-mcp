@@ -7,11 +7,15 @@ The intended MVP deployment is one Docker container containing the MCP server an
 ```text
 /etc or deployment directory
 ├── config/repositories.json   # repository allow-list; mounted read-only
-├── .env                        # MCP token + GitHub PAT; never commit
+├── secrets/
+│   ├── mcp_token              # MCP bearer token; Docker secret
+│   └── github_pat             # GitHub PAT; Docker secret
 └── repositories/               # persistent Git workspaces; never commit
 ```
 
-The repository configuration is mounted into the container as `/etc/personal-repo-mcp/repositories.json`. Repository workspaces are mounted at `/srv/personal-repo-mcp/repositories`.
+The repository configuration is mounted into the container as `/etc/personal-repo-mcp/repositories.json`. Repository workspaces are mounted at `/srv/personal-repo-mcp/repositories`. Secret files are mounted by Compose under `/run/secrets/` and are not included in the repository workspace.
+
+Protect the `secrets/` directory with restrictive host permissions (for example, owner-only read access).
 
 ## Repository configuration
 
@@ -39,8 +43,17 @@ Do not put credentials in this JSON file.
 
 There are two separate credentials:
 
-- `PERSONAL_REPO_MCP_TOKEN`: bearer token used by MCP clients to authenticate to the server.
-- `PERSONAL_REPO_MCP_GITHUB_PAT`: GitHub personal access token used by Git for HTTPS clone/fetch/pull/push operations.
+- MCP bearer token: authenticates MCP clients to the server.
+- GitHub personal access token: authenticates Git HTTPS operations against GitHub.
+
+The production Compose deployment supplies both through Docker secrets:
+
+```text
+secrets/mcp_token
+secrets/github_pat
+```
+
+The application reads them using `PERSONAL_REPO_MCP_TOKEN_FILE` and `PERSONAL_REPO_MCP_GITHUB_PAT_FILE`. Direct environment variables with the old names remain supported for non-Docker deployments and migration, but secret files are preferred for production.
 
 The GitHub PAT is passed to Git through `GIT_ASKPASS`; it is never inserted into a repository URL or written into repository configuration. `GIT_TERMINAL_PROMPT=0` prevents Git from hanging for interactive credentials.
 
@@ -52,22 +65,25 @@ Configured MCP and GitHub credentials are scrubbed from outbound MCP results. Sc
 
 ## Compose deployment
 
-Set the required variables in a host-only `.env` file or export them in the deployment environment. See `.env.example`.
-
-Create the host configuration and persistent workspace directory:
+Create the host configuration, persistent workspace directory, and secret files:
 
 ```text
-mkdir -p config repositories
+mkdir -p config repositories secrets
 cp config/repositories.example.json config/repositories.json
+printf '%s\n' 'replace-with-a-long-random-mcp-token' > secrets/mcp_token
+printf '%s\n' 'replace-with-your-github-pat' > secrets/github_pat
+chmod 600 secrets/mcp_token secrets/github_pat
 ```
 
-Edit `config/repositories.json`, set the credentials in `.env`, then run:
+Edit `config/repositories.json` and replace both secret values. Then run:
 
 ```text
 docker compose up -d --build
 ```
 
 The container listens on `127.0.0.1:8000` on the host. Put an HTTPS reverse proxy in front of it for Internet access. Do not publish the MCP port directly to the Internet.
+
+Compose gives the container a 30-second stop grace period so an orderly shutdown can complete before Docker force-kills the process.
 
 ## Health
 
@@ -89,7 +105,7 @@ The security boundary is layered:
 6. Host/Origin validation protects the Streamable HTTP endpoint against DNS-rebinding and unwanted browser origins.
 7. Outbound MCP results scrub configured credentials before they reach the client.
 
-The host should also protect the `.env`, repository configuration, and persistent repository directory with normal filesystem permissions.
+The host should also protect the secret files, repository configuration, and persistent repository directory with normal filesystem permissions.
 
 ## Not included yet
 
