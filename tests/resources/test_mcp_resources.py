@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -34,4 +35,7 @@ async def test_resource_templates_are_registered(tmp_path: Path) -> None:
     assert "repo://{repository}/git/conflicts" in uris
 
     contents = await server.read_resource("repo://foo/file/README.md")
-    assert contents[0].content["sha256"] if isinstance(contents[0].content, dict) else True
+    payload = json.loads(contents[0].content)
+    assert payload["path"] == "README.md"
+    assert payload["content"] == "hello\n"
+    assert len(payload["sha256"]) == 64
