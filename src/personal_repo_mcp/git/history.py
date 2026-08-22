@@ -12,7 +12,7 @@ def log(runner: GitRunner, limit: int = 20) -> list[dict[str, str]]:
 
 
 def show(runner: GitRunner, revision: str) -> str:
-    return runner.run("show", "--no-ext-diff", "--format=fuller", "--", revision)
+    return runner.run("show", "--no-ext-diff", "--format=fuller", revision, "--")
 
 
 def blame(runner: GitRunner, path: str) -> str:
