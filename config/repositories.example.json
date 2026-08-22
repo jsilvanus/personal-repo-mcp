@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "repositories": [
+    {
+      "id": "personal-repo-mcp",
+      "name": "personal-repo-mcp",
+      "remote": "https://github.com/jsilvanus/personal-repo-mcp.git",
+      "workspace": "personal-repo-mcp"
+    }
+  ]
+}
