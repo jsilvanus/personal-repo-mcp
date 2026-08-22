@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from .paths import FileSystemError, relative_path, resolve_repository_path
+from .paths import FileSystemError, ensure_writable_repository_path, relative_path, resolve_repository_path
 
 
 def content_hash(content: str) -> str:
@@ -42,6 +42,10 @@ def _atomic_write(target: Path, content: str) -> None:
         raise FileSystemError(f"Cannot write file: {target}") from exc
 
 
+def _writable_target(workspace: Path, path: str) -> Path:
+    return ensure_writable_repository_path(workspace, resolve_repository_path(workspace, path))
+
+
 def write_file(
     workspace: Path,
     path: str,
@@ -49,7 +53,7 @@ def write_file(
     *,
     expected_hash: str | None = None,
 ) -> dict[str, object]:
-    target = resolve_repository_path(workspace, path)
+    target = _writable_target(workspace, path)
     _check_expected(target, expected_hash)
     _atomic_write(target, content)
     return {"path": relative_path(workspace, target), "bytes": len(content.encode("utf-8")), "sha256": content_hash(content)}
@@ -76,7 +80,7 @@ def _replace_range(text: str, start_line: int, end_line: int, replacement: str) 
 
 
 def replace_lines(workspace: Path, path: str, start_line: int, end_line: int, content: str, *, expected_hash: str | None = None) -> dict[str, object]:
-    target = resolve_repository_path(workspace, path)
+    target = _writable_target(workspace, path)
     current = _read_existing(target)
     if expected_hash is not None and content_hash(current) != expected_hash:
         raise FileSystemError("File changed since the agent last read it")
@@ -86,7 +90,7 @@ def replace_lines(workspace: Path, path: str, start_line: int, end_line: int, co
 
 
 def insert_lines(workspace: Path, path: str, line: int, content: str, *, expected_hash: str | None = None) -> dict[str, object]:
-    target = resolve_repository_path(workspace, path)
+    target = _writable_target(workspace, path)
     current = _read_existing(target)
     if expected_hash is not None and content_hash(current) != expected_hash:
         raise FileSystemError("File changed since the agent last read it")
