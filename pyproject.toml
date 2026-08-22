@@ -9,8 +9,8 @@ authors = [
   { name = "Juha Itäleino" }
 ]
 dependencies = [
-  "mcp>=1.26.0",
-  "starlette>=0.47.0",
+  "mcp>=2.0,<3",
+  "starlette>=0.48.0",
   "uvicorn[standard]>=0.35.0",
 ]
 
