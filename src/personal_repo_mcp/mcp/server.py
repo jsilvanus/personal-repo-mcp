@@ -6,6 +6,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from ..config import Settings
 from ..repositories import RepositoryError, RepositoryManager
 from ..resources import register_resources
+from ..security.secrets import make_secret_scrubber
 from ..tools.chain import register_chain_tools
 from ..tools.files import register_file_tools
 from ..tools.git import register_git_tools
@@ -20,6 +21,9 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
             "A persistent multi-repository Git workspace for AI agents. "
             "Repositories are server-managed workspaces; GitHub is an upstream remote."
         ),
+        middleware=[
+            make_secret_scrubber((settings.token, settings.github_pat)),
+        ],
     )
 
     @mcp.tool()
