@@ -5,6 +5,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from ..config import Settings
 from ..repositories import RepositoryError, RepositoryManager
+from ..resources import register_resources
 from ..tools.chain import register_chain_tools
 from ..tools.files import register_file_tools
 from ..tools.git import register_git_tools
@@ -12,7 +13,7 @@ from ..tools.workspace import register_workspace_tools
 
 
 def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer:
-    """Create the MCP server and register the available tools."""
+    """Create the MCP server and register the available tools and resources."""
     mcp = MCPServer(
         name="Personal Repo MCP",
         instructions=(
@@ -46,6 +47,7 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
     register_git_tools(mcp, repositories)
     register_workspace_tools(mcp, repositories)
     register_chain_tools(mcp)
+    register_resources(mcp, repositories)
     return mcp
 
 
