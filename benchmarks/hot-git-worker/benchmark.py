@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import random
 import shutil
 import subprocess
@@ -36,7 +35,6 @@ def make_repo(files: int) -> tuple[Path, list[str]]:
         git("config", "user.name", "benchmark", cwd=root)
         git("config", "user.email", "benchmark@example.invalid", cwd=root)
 
-        objects: list[str] = []
         for i in range(files):
             path = root / f"file-{i:06d}.txt"
             path.write_text(
@@ -47,14 +45,12 @@ def make_repo(files: int) -> tuple[Path, list[str]]:
         git("add", ".", cwd=root)
         git("commit", "-q", "-m", "benchmark", cwd=root)
 
-        # Resolve blob IDs once. The benchmark then measures object access,
-        # not path/tree traversal.
         output = git("ls-tree", "-r", "HEAD", cwd=root)
-        for line in output.splitlines():
-            parts = line.split()
-            if len(parts) >= 3 and parts[1] == "blob":
-                objects.append(parts[2])
-
+        objects = [
+            parts[2]
+            for line in output.splitlines()
+            if len(parts := line.split()) >= 3 and parts[1] == "blob"
+        ]
         if not objects:
             raise RuntimeError("repository contains no blob objects")
         return root, objects
@@ -76,9 +72,7 @@ def read_one_process(repo: Path, object_id: str) -> bytes:
 
 def benchmark_cold(repo: Path, objects: list[str]) -> tuple[float, int]:
     started = time.perf_counter()
-    total = 0
-    for object_id in objects:
-        total += len(read_one_process(repo, object_id))
+    total = sum(len(read_one_process(repo, object_id)) for object_id in objects)
     return time.perf_counter() - started, total
 
 
@@ -125,22 +119,26 @@ class CatFileWorker:
             raise RuntimeError(f"cat-file exited with {returncode}: {stderr!r}")
 
 
-def benchmark_hot(repo: Path, objects: list[str], repeat: int) -> tuple[float, int]:
+def benchmark_hot(repo: Path, objects: list[str]) -> tuple[float, int]:
     worker = CatFileWorker(repo)
     try:
         started = time.perf_counter()
-        total = 0
-        for object_id in objects:
-            total += len(worker.read(object_id))
-        elapsed = time.perf_counter() - started
+        total = sum(len(worker.read(object_id)) for object_id in objects)
+        return time.perf_counter() - started, total
+    finally:
+        worker.close()
 
-        # Repeat a smaller working set to show the best-case effect of keeping
-        # the Git process alive. This is still Git/OS caching, not an app cache.
-        if repeat:
-            sample = objects[: min(repeat, len(objects))]
+
+def benchmark_repeated(repo: Path, objects: list[str], rounds: int) -> tuple[float, int]:
+    worker = CatFileWorker(repo)
+    try:
+        sample = objects[: min(100, len(objects))]
+        started = time.perf_counter()
+        total = 0
+        for _ in range(rounds):
             for object_id in sample:
                 total += len(worker.read(object_id))
-        return elapsed, total
+        return time.perf_counter() - started, total
     finally:
         worker.close()
 
@@ -150,15 +148,15 @@ def main() -> None:
     parser.add_argument("--files", type=int, default=1000)
     parser.add_argument("--reads", type=int, default=500)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--repeat-rounds", type=int, default=10)
     args = parser.parse_args()
 
-    if args.files < 1 or args.reads < 1:
-        parser.error("--files and --reads must be positive")
+    if min(args.files, args.reads, args.repeat_rounds) < 1:
+        parser.error("--files, --reads and --repeat-rounds must be positive")
 
     random.seed(args.seed)
     repo, objects = make_repo(args.files)
     try:
-        # Use a random sample so the measured reads are not merely sequential.
         reads = [random.choice(objects) for _ in range(args.reads)]
 
         setup_started = time.perf_counter()
@@ -172,7 +170,8 @@ def main() -> None:
         print()
 
         cold_time, cold_bytes = benchmark_cold(repo, reads)
-        hot_time, hot_bytes = benchmark_hot(repo, reads, repeat=min(100, len(reads)))
+        hot_time, hot_bytes = benchmark_hot(repo, reads)
+        repeated_time, repeated_bytes = benchmark_repeated(repo, objects, args.repeat_rounds)
 
         print("One Git process per object")
         print(f"  time:  {cold_time:.3f}s")
@@ -180,7 +179,11 @@ def main() -> None:
         print()
         print("Persistent git cat-file --batch")
         print(f"  time:  {hot_time:.3f}s")
-        print(f"  bytes: {hot_bytes:,} (includes repeat sample)")
+        print(f"  bytes: {hot_bytes:,}")
+        print()
+        print("Persistent worker, repeated 100-object working set")
+        print(f"  time:  {repeated_time:.3f}s")
+        print(f"  bytes: {repeated_bytes:,}")
         print()
 
         if hot_time > 0:
