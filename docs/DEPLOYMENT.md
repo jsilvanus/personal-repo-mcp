@@ -48,21 +48,18 @@ Use a GitHub PAT with only the repository permissions required by the repositori
 
 ## Compose deployment
 
-Set the required variables in a host-only `.env` file or export them in the deployment environment:
+Set the required variables in a host-only `.env` file or export them in the deployment environment. See `.env.example`.
 
-```text
-PERSONAL_REPO_MCP_TOKEN=<random-long-server-token>
-PERSONAL_REPO_MCP_GITHUB_PAT=<github-pat>
-PERSONAL_REPO_MCP_ALLOWED_HOSTS=mcp.example.com
-PERSONAL_REPO_MCP_ALLOWED_ORIGINS=https://mcp.example.com
-```
-
-Then:
+Create the host configuration and persistent workspace directory:
 
 ```text
 mkdir -p config repositories
-after copying config/repositories.example.json to config/repositories.json
+cp config/repositories.example.json config/repositories.json
+```
 
+Edit `config/repositories.json`, set the credentials in `.env`, then run:
+
+```text
 docker compose up -d --build
 ```
 
