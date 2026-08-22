@@ -5,7 +5,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PERSONAL_REPO_MCP_HOST=0.0.0.0 \
     PERSONAL_REPO_MCP_PORT=8000 \
     PERSONAL_REPO_MCP_ROOT=/srv/personal-repo-mcp/repositories \
-    PERSONAL_REPO_MCP_CONFIG=/etc/personal-repo-mcp/repositories.json
+    PERSONAL_REPO_MCP_CONFIG=/etc/personal-repo-mcp/repositories.json \
+    PERSONAL_REPO_MCP_GITHUB_PAT_FILE=/run/secrets/github_pat
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
@@ -14,7 +15,7 @@ RUN apt-get update \
        '#!/bin/sh' \
        'case "$1" in' \
        '  *Username*) printf "%s\\n" "x-access-token" ;;' \
-       '  *) printf "%s\\n" "${PERSONAL_REPO_MCP_GITHUB_PAT}" ;;' \
+       '  *) if [ -n "${PERSONAL_REPO_MCP_GITHUB_PAT_FILE:-}" ] && [ -r "$PERSONAL_REPO_MCP_GITHUB_PAT_FILE" ]; then cat "$PERSONAL_REPO_MCP_GITHUB_PAT_FILE"; else printf "%s\\n" "${PERSONAL_REPO_MCP_GITHUB_PAT}"; fi ;;' \
        'esac' > /usr/local/bin/personal-repo-mcp-git-askpass \
     && chmod 0555 /usr/local/bin/personal-repo-mcp-git-askpass
 

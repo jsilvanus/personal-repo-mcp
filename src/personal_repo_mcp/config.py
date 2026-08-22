@@ -40,7 +40,30 @@ def _csv(value: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return items or default
 
 
+def _read_secret(name: str, file_name: str, *, required: bool = True) -> str | None:
+    """Read a secret from a file, falling back to the environment for compatibility."""
+    path_value = os.getenv(file_name)
+    if path_value:
+        try:
+            value = Path(path_value).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigurationError(f"Cannot read secret file for {name}") from exc
+        if value:
+            return value
+        if required:
+            raise ConfigurationError(f"Secret file for {name} is empty")
+        return None
+
+    value = os.getenv(name)
+    if value:
+        return value
+    if required:
+        raise ConfigurationError(f"{name} or {file_name} must be set")
+    return None
+
+
 def _repository_config(raw: Any, root: Path) -> RepositoryConfig:
+    """Parse and validate one repository configuration."""
     if not isinstance(raw, dict):
         raise ConfigurationError("Each repository must be an object")
 
@@ -123,17 +146,14 @@ def load_settings() -> Settings:
     if not 1 <= port <= 65535:
         raise ConfigurationError("PERSONAL_REPO_MCP_PORT must be between 1 and 65535")
 
-    token = os.getenv("PERSONAL_REPO_MCP_TOKEN")
-    if not token:
-        raise ConfigurationError(
-            "PERSONAL_REPO_MCP_TOKEN must be set for the remote HTTP server"
-        )
+    token = _read_secret("PERSONAL_REPO_MCP_TOKEN", "PERSONAL_REPO_MCP_TOKEN_FILE")
+    github_pat = _read_secret(
+        "PERSONAL_REPO_MCP_GITHUB_PAT",
+        "PERSONAL_REPO_MCP_GITHUB_PAT_FILE",
+    )
 
-    github_pat = os.getenv("PERSONAL_REPO_MCP_GITHUB_PAT")
-    if not github_pat:
-        raise ConfigurationError(
-            "PERSONAL_REPO_MCP_GITHUB_PAT must be set for GitHub operations"
-        )
+    assert token is not None
+    assert github_pat is not None
 
     return Settings(
         host=os.getenv("PERSONAL_REPO_MCP_HOST", "127.0.0.1"),
