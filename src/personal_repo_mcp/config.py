@@ -30,6 +30,7 @@ class Settings:
     token: str | None
     allowed_hosts: tuple[str, ...]
     allowed_origins: tuple[str, ...]
+    repository_root: Path
     repositories: tuple[RepositoryConfig, ...]
 
 
@@ -119,5 +120,6 @@ def load_settings() -> Settings:
             os.getenv("PERSONAL_REPO_MCP_ALLOWED_ORIGINS", ""),
             ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"),
         ),
+        repository_root=root,
         repositories=repositories,
     )
