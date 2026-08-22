@@ -1,15 +1,20 @@
 from pathlib import Path
 
+import pytest
+
 from personal_repo_mcp.config import RepositoryConfig, Settings
 from personal_repo_mcp.mcp.server import create_mcp
 from personal_repo_mcp.repositories import RepositoryManager
 
 
-def test_phase_one_tools_are_registered() -> None:
+@pytest.mark.asyncio
+async def test_phase_one_tools_are_registered() -> None:
     settings = Settings(
         host="127.0.0.1",
         port=8000,
         token="secret",
+        allowed_hosts=("127.0.0.1:*",),
+        allowed_origins=("http://127.0.0.1:*",),
         repositories=(
             RepositoryConfig(
                 id="demo",
@@ -20,7 +25,6 @@ def test_phase_one_tools_are_registered() -> None:
         ),
     )
     mcp = create_mcp(settings, RepositoryManager(settings.repositories))
-    tools = mcp._tool_manager._tools
-    assert "get_repositories" in tools
-    assert "get_repository" in tools
-    assert "prepare_repository" in tools
+    tools = await mcp.list_tools()
+    names = {tool.name for tool in tools}
+    assert {"get_repositories", "get_repository", "prepare_repository"} <= names
