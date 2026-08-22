@@ -14,10 +14,6 @@ dependencies = [
   "uvicorn[standard]>=0.35.0",
 ]
 
-authors = [
-  { name = "Juha Itäleino" }
-]
-
 [project.optional-dependencies]
 test = [
   "pytest>=8.3",
