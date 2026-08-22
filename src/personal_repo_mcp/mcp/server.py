@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from mcp.server import Context, MCPServer
+from mcp.server import MCPServer
+from mcp.server.context import Context
 from mcp.server.transport_security import TransportSecuritySettings
 
 from ..config import Settings
