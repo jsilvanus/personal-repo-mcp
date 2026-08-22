@@ -12,7 +12,7 @@ dependencies = [
   "mcp>=2.0,<3",
   "starlette>=0.48.0",
   "uvicorn[standard]>=0.35.0",
-  "hot-git>=0.2.0",
+  "hot-git @ git+https://github.com/jsilvanus/hot-git.git@main",
 ]
 
 [project.optional-dependencies]
