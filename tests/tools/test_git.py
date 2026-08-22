@@ -1,11 +1,21 @@
+from pathlib import Path
+
+from personal_repo_mcp.config import RepositoryConfig, Settings
 from personal_repo_mcp.mcp.server import create_mcp
 from personal_repo_mcp.repositories import RepositoryManager
-from personal_repo_mcp.config import RepositoryConfig
 
 
-def test_git_tools_are_registered(tmp_path):
+def test_git_tools_are_registered(tmp_path: Path):
     config = RepositoryConfig(id="repo", name="Repo", remote="https://example.invalid/repo.git", workspace=tmp_path / "repo")
     manager = RepositoryManager(tmp_path, (config,))
-    server = create_mcp.__wrapped__ if hasattr(create_mcp, "__wrapped__") else create_mcp
-    # Registration itself is exercised by constructing the MCP server; exact SDK introspection is version-specific.
-    assert callable(server)
+    settings = Settings(
+        host="127.0.0.1",
+        port=8000,
+        token="test",
+        allowed_hosts=("127.0.0.1:*",),
+        allowed_origins=("http://127.0.0.1:*",),
+        repository_root=tmp_path,
+        repositories=(config,),
+    )
+    server = create_mcp(settings, manager)
+    assert server is not None
