@@ -29,6 +29,7 @@ class Settings:
     port: int
     token: str
     github_pat: str
+    git_backend: str
     allowed_hosts: tuple[str, ...]
     allowed_origins: tuple[str, ...]
     repository_root: Path
@@ -130,6 +131,9 @@ def load_settings() -> Settings:
     ids = [repo.id for repo in repositories]
     if len(ids) != len(set(ids)):
         raise ConfigurationError("Repository ids must be unique")
+    git_backend = os.getenv("PERSONAL_REPO_MCP_GIT_BACKEND", "git").strip().lower()
+    if git_backend not in {"git", "hot-git"}:
+        raise ConfigurationError("PERSONAL_REPO_MCP_GIT_BACKEND must be 'git' or 'hot-git'")
     try:
         port = int(os.getenv("PERSONAL_REPO_MCP_PORT", "8000"))
     except ValueError as exc:
@@ -145,6 +149,7 @@ def load_settings() -> Settings:
         port=port,
         token=token,
         github_pat=github_pat,
+        git_backend=git_backend,
         allowed_hosts=_csv(os.getenv("PERSONAL_REPO_MCP_ALLOWED_HOSTS", ""), ("127.0.0.1:*", "localhost:*", "[::1]:*")),
         allowed_origins=_csv(os.getenv("PERSONAL_REPO_MCP_ALLOWED_ORIGINS", ""), ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")),
         repository_root=root,
