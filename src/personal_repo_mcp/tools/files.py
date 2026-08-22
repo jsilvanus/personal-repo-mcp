@@ -26,7 +26,7 @@ def register_file_tools(mcp: MCPServer, repositories: RepositoryManager) -> None
         except RepositoryError as exc:
             raise ValueError(str(exc)) from exc
 
-    @mcp.tool()
+    @mcp.tool(name="read_file")
     def read_file_tool(repository: str, path: str, start_line: int | None = None, end_line: int | None = None) -> dict[str, object]:
         """Read a UTF-8 repository file, optionally as a 1-based inclusive line range."""
         try:
