@@ -5,10 +5,11 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from ..config import Settings
 from ..repositories import RepositoryError, RepositoryManager
+from ..tools.files import register_file_tools
 
 
 def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer:
-    """Create the MCP server and register Phase 1 tools."""
+    """Create the MCP server and register the available tools."""
     mcp = MCPServer(
         name="Personal Repo MCP",
         instructions=(
@@ -38,6 +39,7 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
         except RepositoryError as exc:
             raise ValueError(str(exc)) from exc
 
+    register_file_tools(mcp, repositories)
     return mcp
 
 
