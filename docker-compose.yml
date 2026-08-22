@@ -6,10 +6,9 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       PERSONAL_REPO_MCP_TOKEN: ${PERSONAL_REPO_MCP_TOKEN:?set PERSONAL_REPO_MCP_TOKEN}
-      PERSONAL_REPO_MCP_CONFIG: /etc/personal-repo-mcp/repositories.json
+      PERSONAL_REPO_MCP_REPOSITORIES: ${PERSONAL_REPO_MCP_REPOSITORIES:-[]}
       PERSONAL_REPO_MCP_ROOT: /srv/personal-repo-mcp/repositories
       PERSONAL_REPO_MCP_HOST: 0.0.0.0
       PERSONAL_REPO_MCP_PORT: 8000
     volumes:
       - ./repositories:/srv/personal-repo-mcp/repositories
-      - ./repositories.json:/etc/personal-repo-mcp/repositories.json:ro
