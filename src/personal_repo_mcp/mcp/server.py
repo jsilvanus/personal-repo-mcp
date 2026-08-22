@@ -9,7 +9,7 @@ from ..repositories import RepositoryError, RepositoryManager
 from ..resources import register_resources
 from ..resources.invalidation import notify_repository_set_changed
 from ..security.secrets import make_secret_scrubber
-from .chain import register_chain_tools
+from ..tools.chain import register_chain_tools
 from .files import register_file_tools
 from .git import register_git_tools
 from .prompts import register_prompts
