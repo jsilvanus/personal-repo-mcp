@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import subprocess
 from pathlib import Path
 
@@ -14,17 +15,13 @@ class RepositoryError(RuntimeError):
 
 
 class RepositoryManager:
-    """Owns the mapping between stable repository ids and VPS workspaces."""
+    """Owns stable workspaces and enforces the administrator's repository allow-list."""
 
-    def __init__(self, root: Path, configs: tuple[RepositoryConfig, ...]):
+    def __init__(self, root: Path, configs: tuple[RepositoryConfig, ...], patterns: tuple[str, ...] = ()):
         self._root = root.resolve()
+        self._patterns = tuple(patterns)
         self._repositories = {
-            config.id: Repository(
-                id=config.id,
-                name=config.name,
-                remote=config.remote,
-                workspace=config.workspace,
-            )
+            config.id: Repository(id=config.id, name=config.name, remote=config.remote, workspace=config.workspace)
             for config in configs
         }
 
@@ -37,32 +34,64 @@ class RepositoryManager:
         except KeyError as exc:
             raise RepositoryError(f"Unknown repository: {repository_id}") from exc
 
+    def is_allowed(self, repository_id: str) -> bool:
+        return repository_id in self._repositories or any(
+            fnmatch.fnmatchcase(repository_id, pattern) for pattern in self._patterns
+        )
+
+    def allowed_patterns(self) -> tuple[str, ...]:
+        return self._patterns
+
     def prepare_all(self) -> None:
         for repository in self.list():
             self.prepare(repository.id)
 
     def prepare(self, repository_id: str) -> Repository:
         repository = self.get(repository_id)
+        return self._clone_or_validate(repository)
+
+    def clone(self, repository_id: str) -> Repository:
+        """Clone an allowed GitHub OWNER/REPOSITORY into persistent storage."""
+        if not self._valid_remote_id(repository_id):
+            raise RepositoryError("Repository must use the GitHub OWNER/REPOSITORY form")
+        if not self.is_allowed(repository_id):
+            raise RepositoryError(f"Repository is not allowed: {repository_id}")
+
+        existing = self._repositories.get(repository_id)
+        if existing is not None:
+            return self._clone_or_validate(existing)
+
+        owner, name = repository_id.split("/", 1)
+        workspace = (self._root / owner / name).resolve()
+        try:
+            ensure_contained(self._root, workspace)
+        except RepositoryPathError as exc:
+            raise RepositoryError(str(exc)) from exc
+        repository = Repository(
+            id=repository_id,
+            name=name,
+            remote=f"https://github.com/{owner}/{name}.git",
+            workspace=workspace,
+        )
+        self._repositories[repository_id] = repository
+        try:
+            return self._clone_or_validate(repository)
+        except Exception:
+            self._repositories.pop(repository_id, None)
+            raise
+
+    def _clone_or_validate(self, repository: Repository) -> Repository:
         try:
             workspace = ensure_contained(self._root, repository.workspace)
         except RepositoryPathError as exc:
             raise RepositoryError(str(exc)) from exc
-
         workspace.parent.mkdir(parents=True, exist_ok=True)
-
         if repository.initialized:
-            if repository.workspace.resolve() != workspace:
-                raise RepositoryError(f"Repository workspace changed unexpectedly: {workspace}")
             return repository
-
         if workspace.exists() and any(workspace.iterdir()):
-            raise RepositoryError(
-                f"Workspace exists and is not a Git repository: {workspace}"
-            )
-
+            raise RepositoryError(f"Workspace exists and is not a Git repository: {workspace}")
         if workspace.exists() and not any(workspace.iterdir()):
             workspace.rmdir()
-
         command = ["git", "clone", "--", repository.remote, str(workspace)]
         try:
             subprocess.run(
@@ -80,5 +109,9 @@ class RepositoryManager:
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or exc.stdout or "git clone failed").strip()
             raise RepositoryError(f"Failed to clone {repository.id}: {detail}") from exc
-
         return repository
+
+    @staticmethod
+    def _valid_remote_id(repository_id: str) -> bool:
+        parts = repository_id.split("/")
+        return len(parts) == 2 and all(parts) and all(part not in {".", ".."} for part in parts)
