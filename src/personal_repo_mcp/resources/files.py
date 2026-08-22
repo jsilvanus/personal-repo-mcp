@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from mcp.server import Context, MCPServer
+from mcp.server.mcpserver import Context
+from mcp.server import MCPServer
 
 from ..repositories import RepositoryError, RepositoryManager
 from ..repositories.paths import RepositoryPathError, ensure_contained
