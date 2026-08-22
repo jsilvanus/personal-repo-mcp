@@ -47,27 +47,45 @@ persistent workspace
 
 Test/build execution and MCP Tasks are intentionally not part of the current runtime.
 
+## Resources
+
+The resource model separates stable information from independently changing state:
+
+```text
+system://info
+system://storage
+system://repositories
+
+repo://<repository>/info
+repo://<repository>/storage
+repo://<repository>/file/<path>
+repo://<repository>/git/status
+repo://<repository>/git/diff
+repo://<repository>/git/conflicts
+repo://<repository>/tests/<run-id>       # reserved
+repo://<repository>/artifacts/<id>      # reserved
+```
+
+`system://info` contains stable server/container information such as version, transport, effective CPU count, and memory limit. Ordinary file changes do not invalidate it.
+
+`system://storage` reports current storage usage for the persistent workspace. It can change as repository files are created, modified, cloned, or deleted.
+
+`system://repositories` is a list of repository descriptors. It includes concrete managed repositories and administrator-approved selectors that have not necessarily been cloned yet. Cloning an allowed repository changes this resource; ordinary file edits do not.
+
+Repository-specific information and storage are separate from Git state. A file notification is scoped to the changed file and the Git resources affected by that change rather than invalidating the basic system information or repository list.
+
+Resource subscriptions therefore let an agent watch exactly the state it cares about. Notifications are change signals; the client reads the resource again to obtain the current value.
+
 ## Repository allow-list administration
 
 After installing the package, the host administrator uses the `mcp-config` command. It modifies the host-side configuration only.
 
 ```bash
-# Store GitHub PAT securely (prompts if the value is omitted)
 mcp-config pat
-
-# Or provide it explicitly
 mcp-config pat "$GITHUB_PAT"
-
-# Allow one repository
 mcp-config add repo jsilvanus/my-project
-
-# Allow all repositories matching a GitHub owner pattern
 mcp-config add repo jsilvanus/*
-
-# Show configured selectors
 mcp-config list repo
-
-# Remove a selector; this does not delete existing workspace data
 mcp-config remove repo jsilvanus/my-project
 ```
 
@@ -123,27 +141,9 @@ The server verifies that `jsilvanus/project` matches an administrator-approved s
 
 Once cloned, the repository is available to the normal filesystem, Git, chain, and resource operations.
 
-`get_repositories` lists repositories currently present as managed local workspaces; it does not enumerate every repository matching a wildcard.
-
 ## Deployment
 
-The intended production deployment is **one Docker container for the whole MCP**, not one container per repository:
-
-```text
-Internet
-   |
-HTTPS reverse proxy
-   |
-127.0.0.1:8000
-   |
-+------------------------+
-| personal-repo-mcp      |
-| Python + MCP SDK + Git |
-| all workspaces         |
-+-----------+------------+
-            |
-     persistent volume
-```
+The intended production deployment is **one Docker container for the whole MCP**, not one container per repository.
 
 ### Quick VPS setup
 
@@ -156,7 +156,7 @@ sudo mkdir -p /etc/personal-repo-mcp/secrets
 sudo mkdir -p /srv/personal-repo-mcp/repositories
 ```
 
-4. Install the package/CLI on the host, or use the project's Python environment:
+4. Install the package/CLI on the host:
 
 ```bash
 python -m venv .venv
@@ -171,7 +171,7 @@ mcp-config pat
 mcp-config add repo jsilvanus/*
 ```
 
-6. Create the MCP bearer-token secret at `/etc/personal-repo-mcp/secrets/mcp-token` and the GitHub PAT is stored by `mcp-config` at `/etc/personal-repo-mcp/secrets/github-pat`.
+6. Create the MCP bearer-token secret at `/etc/personal-repo-mcp/secrets/mcp-token`. The GitHub PAT is stored by `mcp-config` at `/etc/personal-repo-mcp/secrets/github-pat`.
 
 7. Start the server:
 
@@ -188,19 +188,6 @@ docker compose logs -f
 ```
 
 The MCP port is deliberately bound to localhost. Put HTTPS termination and public access in an existing reverse proxy such as Caddy or nginx, proxying to `http://127.0.0.1:8000`.
-
-### Typical operational workflow
-
-Once deployed, the normal update/configuration workflow is:
-
-```bash
-git pull
-mcp-config pat
-mcp-config add repo jsilvanus/*
-docker compose up -d --build
-```
-
-No repository needs to be cloned during deployment. The agent can clone an approved repository when it needs it.
 
 ## Authentication and secrets
 

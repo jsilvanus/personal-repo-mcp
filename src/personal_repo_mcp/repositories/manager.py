@@ -25,6 +25,10 @@ class RepositoryManager:
             for config in configs
         }
 
+    @property
+    def root(self) -> Path:
+        return self._root
+
     def list(self) -> list[Repository]:
         return sorted(self._repositories.values(), key=lambda repo: repo.id)
 

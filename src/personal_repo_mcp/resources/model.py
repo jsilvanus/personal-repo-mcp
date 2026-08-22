@@ -24,3 +24,23 @@ def test_uri(repository: str, run_id: str) -> str:
 
 def artifact_uri(repository: str, artifact_id: str) -> str:
     return f"repo://{repository}/artifacts/{artifact_id}"
+
+
+def system_info_uri() -> str:
+    return "system://info"
+
+
+def system_storage_uri() -> str:
+    return "system://storage"
+
+
+def system_repositories_uri() -> str:
+    return "system://repositories"
+
+
+def repository_info_uri(repository: str) -> str:
+    return f"repo://{repository}/info"
+
+
+def repository_storage_uri(repository: str) -> str:
+    return f"repo://{repository}/storage"
