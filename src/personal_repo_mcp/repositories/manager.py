@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from ..config import RepositoryConfig
+from ..git.auth import git_environment
 from .model import Repository
 from .paths import RepositoryPathError, ensure_contained
 
@@ -66,6 +67,8 @@ class RepositoryManager:
         try:
             subprocess.run(
                 command,
+                cwd=self._root,
+                env=git_environment(),
                 check=True,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
