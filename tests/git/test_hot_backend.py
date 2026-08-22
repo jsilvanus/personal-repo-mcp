@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
 
-from hotgit import Repository
+from hotgit import Change
 
 from personal_repo_mcp.config import RepositoryConfig
 from personal_repo_mcp.repositories import RepositoryManager
@@ -46,7 +46,7 @@ def test_hot_backend_reads_and_edits_treeless(tmp_path: Path) -> None:
     base = git("rev-parse", "HEAD", cwd=workspace).strip()
     result = backend.edit(
         "refs/heads/main",
-        __import__("hotgit").Change("hello.txt", b"changed\n") and [__import__("hotgit").Change("hello.txt", b"changed\n")],
+        [Change("hello.txt", b"changed\n")],
         "change hello",
         expected_ref=base,
     )
@@ -54,5 +54,4 @@ def test_hot_backend_reads_and_edits_treeless(tmp_path: Path) -> None:
     assert result.base == base
     assert git("rev-parse", "HEAD", cwd=workspace).strip() == result.commit
     assert git("show", f"{result.commit}:hello.txt", cwd=workspace) == "changed\n"
-    assert not (workspace / ".git" / "index").exists() or True
     manager.close()
