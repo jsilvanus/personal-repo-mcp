@@ -5,8 +5,10 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from ..config import Settings
 from ..repositories import RepositoryError, RepositoryManager
+from ..tools.chain import register_chain_tools
 from ..tools.files import register_file_tools
 from ..tools.git import register_git_tools
+from ..tools.workspace import register_workspace_tools
 
 
 def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer:
@@ -42,6 +44,8 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
 
     register_file_tools(mcp, repositories)
     register_git_tools(mcp, repositories)
+    register_workspace_tools(mcp, repositories)
+    register_chain_tools(mcp)
     return mcp
 
 
