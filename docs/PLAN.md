@@ -64,6 +64,18 @@ Core areas:
 - reset/other destructive operations with explicit safeguards
 - tags and remote inspection as appropriate
 
+## Hot-git backend — Phase 7B
+
+**Status: implemented.**
+
+The server now has a backend boundary with the existing Git command implementation retained as the compatibility backend and `hot-git` as an optional persistent, treeless backend selected with `PERSONAL_REPO_MCP_GIT_BACKEND=hot-git`.
+
+The hot-git backend is cached one-per-repository and closed with the application lifecycle. The integrated operations are `git_read_file` and `git_edit`.
+
+`git_edit` publishes changes with expected-ref CAS and returns the resulting commit. `chain_command` now carries that commit forward: a later `git_edit` receives it as `expected_ref` and a later `git_read_file` reads from it unless the caller explicitly supplies another value. This keeps chained edits linear and prevents accidental overwrites.
+
+The integration is covered by backend, repository-manager, and chain tests. The existing Git backend remains available for operations requiring a working tree or Git's higher-level merge/rebase workflow.
+
 ## Merge conflicts
 
 Merge and rebase conflicts are first-class state.
@@ -93,7 +105,7 @@ Each nested invocation is dispatched through the same server-side tool validatio
 
 The chain is repository-local and cannot switch repositories or recursively call `chain_command`.
 
-The first implementation should focus on sequential execution and structured per-command results. Result references and richer conditional workflows can be added later if needed.
+Hot-git edits additionally maintain a chain-local current commit. Explicit `expected_ref` and `revision` arguments always override automatic propagation.
 
 ## Security
 
