@@ -20,6 +20,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
         settings.repository_root,
         settings.repositories,
         settings.repository_patterns,
+        backend=settings.git_backend,
     )
     mcp = create_mcp(settings, repositories)
     mcp_app = mcp.streamable_http_app(
@@ -33,6 +34,7 @@ def create_app(settings: Settings | None = None) -> Starlette:
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
         async with mcp.session_manager.run():
             yield
+        repositories.close()
 
     async def healthz(_request):
         return PlainTextResponse("ok")
