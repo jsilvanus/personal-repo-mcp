@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Administrative CLI for the personal-repo-mcp host configuration.
+
+This tool modifies the host-side repository allow-list. It never clones or
+creates repository workspaces; cloning is an MCP operation performed later by
+the agent.
+"""
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import getpass
+import json
+import os
+import tempfile
+from pathlib import Path
+from urllib.parse import urlparse
+
+DEFAULT_CONFIG = Path("/etc/personal-repo-mcp/repositories.json")
+DEFAULT_PAT_FILE = Path("/etc/personal-repo-mcp/secrets/github-pat")
+
+
+def load_config(path: Path) -> dict:
+    if not path.exists():
+        return {"version": 1, "repositories": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Cannot read configuration: {path}: {exc}")
+    if isinstance(data, list):
+        data = {"version": 1, "repositories": data}
+    if not isinstance(data, dict) or data.get("version", 1) != 1:
+        raise SystemExit("Unsupported repository configuration format")
+    repos = data.get("repositories")
+    if not isinstance(repos, list):
+        raise SystemExit("repositories.json must contain a repositories array")
+    return {"version": 1, "repositories": repos}
+
+
+def save_config(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
+    try:
+        os.fchmod(fd, 0o640)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
+def normalize_selector(value: str) -> str:
+    value = value.strip()
+    if value.startswith("https://github.com/"):
+        value = value.removeprefix("https://github.com/")
+    if value.startswith("http://github.com/"):
+        value = value.removeprefix("http://github.com/")
+    if value.endswith(".git"):
+        value = value[:-4]
+    value = value.strip("/")
+    parts = value.split("/")
+    if len(parts) != 2 or not all(parts) or any(".." == p for p in parts):
+        raise SystemExit("Repository selector must be OWNER/REPOSITORY, optionally using * or ?")
+    if any(ch in value for ch in "\\\n\r"):
+        raise SystemExit("Invalid repository selector")
+    return value
+
+
+def remote_for(selector: str) -> str:
+    return f"https://github.com/{selector}.git"
+
+
+def add_repo(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    selector = normalize_selector(args.selector)
+    entries = config["repositories"]
+    existing = {str(item.get("pattern", item.get("id", ""))) for item in entries if isinstance(item, dict)}
+    if selector in existing:
+        print(f"Already allowed: {selector}")
+        return
+
+    has_wildcard = "*" in selector or "?" in selector
+    if has_wildcard:
+        entries.append({"pattern": selector})
+    else:
+        entries.append({
+            "id": selector,
+            "name": selector.split("/", 1)[1],
+            "remote": remote_for(selector),
+            "pattern": selector,
+        })
+    entries.sort(key=lambda item: str(item.get("pattern", item.get("id", ""))))
+    save_config(args.config, config)
+    print(f"Allowed: {selector}")
+    print("No repository was cloned or created.")
+
+
+def remove_repo(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    selector = normalize_selector(args.selector)
+    entries = config["repositories"]
+    kept = []
+    removed = False
+    for item in entries:
+        value = str(item.get("pattern", item.get("id", ""))) if isinstance(item, dict) else ""
+        if value == selector:
+            removed = True
+        else:
+            kept.append(item)
+    if not removed:
+        print(f"Not configured: {selector}")
+        return
+    config["repositories"] = kept
+    save_config(args.config, config)
+    print(f"Removed from allow-list: {selector}")
+    print("Existing workspace data was not deleted.")
+
+
+def list_repo(args: argparse.Namespace) -> None:
+    config = load_config(args.config)
+    entries = config["repositories"]
+    if not entries:
+        print("No repositories configured.")
+        return
+    for item in entries:
+        print(item.get("pattern", item.get("id", "")))
+
+
+def set_pat(args: argparse.Namespace) -> None:
+    value = args.value if args.value is not None else getpass.getpass("GitHub PAT: ")
+    if not value.strip():
+        raise SystemExit("PAT cannot be empty")
+    path = args.file
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(value.strip() + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+    print(f"GitHub PAT stored in {path}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="mcp-config")
+    parser.add_argument("--config", type=Path, default=Path(os.getenv("PERSONAL_REPO_MCP_CONFIG", DEFAULT_CONFIG)))
+    parser.add_argument("--pat-file", dest="pat_file", type=Path, default=Path(os.getenv("PERSONAL_REPO_MCP_GITHUB_PAT_FILE", DEFAULT_PAT_FILE)))
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    pat = sub.add_parser("pat", help="store the GitHub PAT")
+    pat.add_argument("value", nargs="?", help="PAT; omit to prompt securely")
+    pat.set_defaults(func=set_pat)
+
+    add = sub.add_parser("add", help="modify the allow-list")
+    add_sub = add.add_subparsers(dest="kind", required=True)
+    add_repo_parser = add_sub.add_parser("repo", help="allow OWNER/REPOSITORY or OWNER/*")
+    add_repo_parser.add_argument("selector")
+    add_repo_parser.set_defaults(func=add_repo)
+
+    remove = sub.add_parser("remove", help="remove an allow-list entry")
+    remove_sub = remove.add_subparsers(dest="kind", required=True)
+    remove_repo_parser = remove_sub.add_parser("repo")
+    remove_repo_parser.add_argument("selector")
+    remove_repo_parser.set_defaults(func=remove_repo)
+
+    listing = sub.add_parser("list", help="list configuration")
+    listing_sub = listing.add_subparsers(dest="kind", required=True)
+    list_repo_parser = listing_sub.add_parser("repo")
+    list_repo_parser.set_defaults(func=list_repo)
+    return parser
+
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
+    if hasattr(args, "file"):
+        args.file = args.pat_file
+    args.func(args)
