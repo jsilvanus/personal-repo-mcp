@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import os
 import random
 import shutil
 import subprocess
@@ -104,8 +105,7 @@ class CatFileWorker:
 
 
 def tree_for_path(repo: Path, ref: str, path: str) -> str:
-    output = git("rev-parse", f"{ref}:{path}", cwd=repo).decode().strip()
-    return output
+    return git("rev-parse", f"{ref}:{path}", cwd=repo).decode().strip()
 
 
 def treeless_edit(repo: Path, ref: str, path: str, suffix: str, message: str) -> str:
@@ -116,15 +116,15 @@ def treeless_edit(repo: Path, ref: str, path: str, suffix: str, message: str) ->
     new_content = original + suffix.encode()
     new_blob = git("hash-object", "-w", "--stdin", cwd=repo, input=new_content).decode().strip()
 
-    # Build a temporary index from the base tree, replace one path, then write a tree.
     index = tempfile.NamedTemporaryFile(prefix="hot-git-index-", delete=False)
     index.close()
     index_path = Path(index.name)
     env = {"GIT_INDEX_FILE": str(index_path)}
     try:
-        subprocess.run(["git", "read-tree", base_commit], cwd=repo, env={**__import__("os").environ, **env}, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["git", "update-index", "--add", "--cacheinfo", "100644", new_blob, path], cwd=repo, env={**__import__("os").environ, **env}, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        new_tree = subprocess.run(["git", "write-tree"], cwd=repo, env={**__import__("os").environ, **env}, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stdout.strip()
+        full_env = {**os.environ, **env}
+        subprocess.run(["git", "read-tree", base_commit], cwd=repo, env=full_env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["git", "update-index", "--add", "--cacheinfo", "100644", new_blob, path], cwd=repo, env=full_env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        new_tree = subprocess.run(["git", "write-tree"], cwd=repo, env=full_env, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stdout.strip()
     finally:
         index_path.unlink(missing_ok=True)
 
@@ -141,7 +141,7 @@ def cas_update(repo: Path, ref: str, expected: str, new_value: str) -> bool:
     return result.returncode == 0
 
 
-def benchmark_reads(repo: Path, objects: list[str], reads: int) -> tuple[float, int, float]:
+def benchmark_reads(repo: Path, objects: list[str], reads: int) -> tuple[float, float, int]:
     sample = [random.choice(objects) for _ in range(reads)]
     started = time.perf_counter()
     total = sum(len(read_one_process(repo, obj)) for obj in sample)
@@ -168,15 +168,21 @@ def benchmark_writes(repo: Path, count: int) -> tuple[float, int]:
 
 def benchmark_cas(repo: Path, workers: int) -> tuple[float, int, int]:
     base = git("rev-parse", "HEAD", cwd=repo).decode().strip()
+    ref = "refs/heads/bench-cas"
+    # The expected old value must actually be the current value of the ref.
+    # Initializing it here makes the race meaningful: exactly one competing
+    # update should observe `base` and win; the others should conflict.
+    git("update-ref", ref, base, cwd=repo)
     candidates = [
         treeless_edit(repo, base, "file-000001.txt", f"worker {i}\n", f"worker {i}")
         for i in range(workers)
     ]
     started = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(lambda commit: cas_update(repo, "refs/heads/bench-cas", base, commit), candidates))
+        results = list(pool.map(lambda commit: cas_update(repo, ref, base, commit), candidates))
     elapsed = time.perf_counter() - started
-    return elapsed, sum(results), len(results) - sum(results)
+    succeeded = sum(results)
+    return elapsed, succeeded, len(results) - succeeded
 
 
 def main() -> None:
@@ -214,7 +220,7 @@ def main() -> None:
         print(f"  workers:                {args.workers}")
         print(f"  time:                   {cas_time:.3f}s")
         print(f"  succeeded:              {succeeded}")
-        print(f"  conflicts:               {conflicted}")
+        print(f"  conflicts:              {conflicted}")
         print("\nNote: benchmark uses Git plumbing and temporary indexes; no working-tree checkout is used for edits.")
     finally:
         shutil.rmtree(repo, ignore_errors=True)
