@@ -46,6 +46,10 @@ The GitHub PAT is passed to Git through `GIT_ASKPASS`; it is never inserted into
 
 Use a GitHub PAT with only the repository permissions required by the repositories this server manages.
 
+## Secret scrubbing
+
+Configured MCP and GitHub credentials are scrubbed from outbound MCP results. Scrubbing recursively handles strings inside dictionaries, lists, and tuples and also handles percent-encoded credential values. This is defense-in-depth: credentials should still never be intentionally placed in repository content or Git URLs.
+
 ## Compose deployment
 
 Set the required variables in a host-only `.env` file or export them in the deployment environment. See `.env.example`.
@@ -83,6 +87,7 @@ The security boundary is layered:
 4. File operations reject writes into nested Git repositories when accessed through a parent repository.
 5. Docker runs the application as an unprivileged user with `no-new-privileges` and all Linux capabilities dropped.
 6. Host/Origin validation protects the Streamable HTTP endpoint against DNS-rebinding and unwanted browser origins.
+7. Outbound MCP results scrub configured credentials before they reach the client.
 
 The host should also protect the `.env`, repository configuration, and persistent repository directory with normal filesystem permissions.
 
