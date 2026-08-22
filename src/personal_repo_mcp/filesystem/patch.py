@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .paths import FileSystemError, relative_path, resolve_repository_path
+from .paths import FileSystemError, ensure_writable_repository_path, relative_path, resolve_repository_path
 from .writer import _atomic_write, content_hash
 
 _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -11,7 +11,7 @@ _HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
 def apply_unified_diff(workspace: Path, path: str, patch: str, *, expected_hash: str | None = None) -> dict[str, object]:
     """Apply a standard single-file unified diff with zero fuzz."""
-    target = resolve_repository_path(workspace, path)
+    target = ensure_writable_repository_path(workspace, resolve_repository_path(workspace, path))
     try:
         original = target.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
