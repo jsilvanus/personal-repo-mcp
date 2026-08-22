@@ -16,7 +16,7 @@ from .repositories import RepositoryManager
 def create_app(settings: Settings | None = None) -> Starlette:
     """Build the HTTP application without starting the process."""
     settings = settings or load_settings()
-    repositories = RepositoryManager(settings.repositories)
+    repositories = RepositoryManager(settings.repository_root, settings.repositories)
     mcp = create_mcp(settings, repositories)
     mcp_app = mcp.streamable_http_app(
         stateless_http=True,
