@@ -61,56 +61,51 @@ def register_file_tools(mcp: MCPServer, repositories: RepositoryManager) -> None
             raise ValueError(str(exc)) from exc
 
     @mcp.tool(name="write_file")
-    async def write_file_tool(repository: str, path: str, content: str, expected_hash: str | None = None, ctx: Context | None = None) -> dict[str, object]:
+    async def write_file_tool(repository: str, path: str, content: str, ctx: Context, expected_hash: str | None = None) -> dict[str, object]:
         """Replace a complete UTF-8 text file atomically."""
         try:
             result = write_file(workspace(repository), path, content, expected_hash=expected_hash)
-            if ctx is not None:
-                await notify_file_changed(ctx, repository, path)
+            await notify_file_changed(ctx, repository, path)
             return result
         except FileSystemError as exc:
             raise ValueError(str(exc)) from exc
 
     @mcp.tool(name="replace_lines")
-    async def replace_lines_tool(repository: str, path: str, start_line: int, end_line: int, content: str, expected_hash: str | None = None, ctx: Context | None = None) -> dict[str, object]:
+    async def replace_lines_tool(repository: str, path: str, start_line: int, end_line: int, content: str, ctx: Context, expected_hash: str | None = None) -> dict[str, object]:
         """Replace an inclusive range of lines in a UTF-8 text file."""
         try:
             result = replace_lines(workspace(repository), path, start_line, end_line, content, expected_hash=expected_hash)
-            if ctx is not None:
-                await notify_file_changed(ctx, repository, path)
+            await notify_file_changed(ctx, repository, path)
             return result
         except FileSystemError as exc:
             raise ValueError(str(exc)) from exc
 
     @mcp.tool(name="insert_lines")
-    async def insert_lines_tool(repository: str, path: str, line: int, content: str, expected_hash: str | None = None, ctx: Context | None = None) -> dict[str, object]:
+    async def insert_lines_tool(repository: str, path: str, line: int, content: str, ctx: Context, expected_hash: str | None = None) -> dict[str, object]:
         """Insert text immediately before the specified 1-based line."""
         try:
             result = insert_lines(workspace(repository), path, line, content, expected_hash=expected_hash)
-            if ctx is not None:
-                await notify_file_changed(ctx, repository, path)
+            await notify_file_changed(ctx, repository, path)
             return result
         except FileSystemError as exc:
             raise ValueError(str(exc)) from exc
 
     @mcp.tool(name="delete_lines")
-    async def delete_lines_tool(repository: str, path: str, start_line: int, end_line: int, expected_hash: str | None = None, ctx: Context | None = None) -> dict[str, object]:
+    async def delete_lines_tool(repository: str, path: str, start_line: int, end_line: int, ctx: Context, expected_hash: str | None = None) -> dict[str, object]:
         """Delete an inclusive range of lines from a UTF-8 text file."""
         try:
             result = delete_lines(workspace(repository), path, start_line, end_line, expected_hash=expected_hash)
-            if ctx is not None:
-                await notify_file_changed(ctx, repository, path)
+            await notify_file_changed(ctx, repository, path)
             return result
         except FileSystemError as exc:
             raise ValueError(str(exc)) from exc
 
     @mcp.tool(name="apply_patch")
-    async def apply_patch_tool(repository: str, path: str, patch: str, expected_hash: str | None = None, ctx: Context | None = None) -> dict[str, object]:
+    async def apply_patch_tool(repository: str, path: str, patch: str, ctx: Context, expected_hash: str | None = None) -> dict[str, object]:
         """Apply a standard single-file unified diff with zero fuzz."""
         try:
             result = apply_unified_diff(workspace(repository), path, patch, expected_hash=expected_hash)
-            if ctx is not None:
-                await notify_file_changed(ctx, repository, path)
+            await notify_file_changed(ctx, repository, path)
             return result
         except FileSystemError as exc:
             raise ValueError(str(exc)) from exc
