@@ -1,103 +1,83 @@
 # personal-repo-mcp
 
-A self-hosted, multi-repository MCP server for AI agents. It gives an agent a persistent Git workspace on your own VPS, with controlled read/write access to configured repositories and normal Git operations.
+A self-hosted, multi-repository MCP server for AI agents. It gives an agent a persistent Git workspace on your own VPS, with controlled read/write access to administrator-approved repositories and normal Git operations.
 
-The goal is deliberately simple: **let an AI work on repositories locally on your server, and push to GitHub when the work is ready.**
+**Version 1.0.0 — MVP**
 
-## Status
+## Core idea
 
-This project is an MVP intended for personal/self-hosted use. The core repository, filesystem, Git, resource, authentication, and Docker deployment features are implemented. Test/build execution and MCP Tasks are intentionally not part of the current runtime.
+The administrator controls **what repositories the agent may access**. The agent controls **which allowed repositories it actually clones**.
+
+```text
+Administrator
+    |
+    | mcp-config add repo jsilvanus/*
+    v
+repositories.json (allow-list)
+    |
+    v
+MCP server
+    |
+    | clone_repository("jsilvanus/project")
+    v
+persistent workspace
+```
+
+`mcp-config add repo` never clones a repository and never creates a workspace.
 
 ## Features
 
-### Repository and filesystem operations
-
 - Multiple repositories in one MCP server.
-- Repository IDs are explicitly configured in an allow-list.
-- Full file reads.
-- Chunked/partial file reads for large files.
-- File writes.
-- Line-oriented insert, replace, and delete operations.
+- Repository allow-list entries, including GitHub `OWNER/*` patterns.
+- Agent-controlled cloning of repositories permitted by the allow-list.
+- Full and chunked file reads.
+- File writes and line-oriented edits.
 - Standard unified-diff application.
-- Persistent workspace files, including untracked Git files.
-- Optimistic writes using content hashes to detect stale changes.
-- Nested Git repositories/submodules can be read but cannot be modified through the parent repository context.
+- Persistent workspaces, including untracked files.
+- Optimistic writes using content hashes.
+- Git status, diff, staging, commit, branch, checkout, reset, merge/rebase, and conflict operations.
+- Repository-scoped `chain_command`.
+- MCP Resources and resource subscriptions.
+- Nested Git repositories/submodules are readable but cannot be modified through the parent repository context.
+- Streamable HTTP transport.
+- Bearer authentication for MCP clients.
+- Separate GitHub PAT for Git operations.
+- Central outbound secret scrubbing.
+- Non-root Docker deployment with dropped capabilities and `no-new-privileges`.
 
-### Git operations
+Test/build execution and MCP Tasks are intentionally not part of the current runtime.
 
-- Status.
-- Diff.
-- Add/stage and commit operations.
-- Branch operations.
-- Checkout and reset operations.
-- Merge/rebase operations.
-- Conflict inspection.
-- Repository-scoped command chaining with `chain_command`.
+## Repository allow-list administration
 
-`chain_command` is intentionally scoped to one repository. A chain does not change the MCP protocol; it is a single tool call containing a sequence of repository operations whose results can be inspected individually.
+After installing the package, the host administrator uses the `mcp-config` command. It modifies the host-side configuration only.
 
-### MCP Resources
+```bash
+# Store GitHub PAT securely (prompts if the value is omitted)
+mcp-config pat
 
-Resources expose persistent repository state using a stable `repo://` namespace:
+# Or provide it explicitly
+mcp-config pat "$GITHUB_PAT"
 
-```text
-repo://<repository>/file/<path>
-repo://<repository>/git/status
-repo://<repository>/git/diff
-repo://<repository>/git/conflicts
-repo://<repository>/tests/<run-id>       # reserved
-repo://<repository>/artifacts/<id>      # reserved
+# Allow one repository
+mcp-config add repo jsilvanus/my-project
+
+# Allow all repositories matching a GitHub owner pattern
+mcp-config add repo jsilvanus/*
+
+# Show configured selectors
+mcp-config list repo
+
+# Remove a selector; this does not delete existing workspace data
+mcp-config remove repo jsilvanus/my-project
 ```
 
-File resources include untracked files and expose content/version information. Git resources expose current repository state.
+The wildcard is a **GitHub repository selector**, not a filesystem wildcard. The CLI never clones repositories.
 
-Resource subscriptions allow clients to observe changes without polling. Resource notifications are change signals; clients read the resource again to obtain the current state.
-
-### Security and deployment
-
-- Streamable HTTP MCP transport for remote VPS deployment.
-- Bearer-token authentication for MCP clients.
-- Separate GitHub PAT for GitHub access.
-- Central outbound secret scrubbing for MCP results and errors.
-- Repository allow-list and path containment checks.
-- Nested Git repository write protection.
-- Non-root Docker runtime.
-- Dropped Linux capabilities and `no-new-privileges`.
-- Persistent repository storage.
-- Host-mounted configuration and secret files.
-- Docker healthcheck and graceful shutdown configuration.
-
-## Architecture
-
-The intended deployment is one container, not one container per repository:
-
-```text
-                         Internet
-                            |
-                       HTTPS proxy
-                            |
-                     127.0.0.1:8000
-                            |
-                 +----------------------+
-                 | personal-repo-mcp    |
-                 |                      |
-                 | Python + MCP SDK     |
-                 | Git                  |
-                 | all configured repos |
-                 +----------+-----------+
-                            |
-                    persistent storage
-                            |
-                 /srv/.../repositories/
-```
-
-Repository isolation is enforced by the MCP application and filesystem path validation. Docker is the deployment boundary, not the repository authorization model.
+The administrator's allow-list is intentionally not an MCP operation. An agent cannot grant itself access to another repository by changing server configuration.
 
 ## Configuration
 
-Production configuration is kept outside the repository workspace.
-
-A typical deployment uses:
+Production configuration is kept outside the repository workspace:
 
 ```text
 /etc/personal-repo-mcp/
@@ -108,219 +88,175 @@ A typical deployment uses:
 
 /srv/personal-repo-mcp/
     repositories/
-        repo-a/
-        repo-b/
+        owner/
+            project/
 ```
 
-### Repository configuration
-
-`repositories.json` uses versioned JSON configuration:
+`repositories.json` is versioned JSON. It can contain concrete repositories and selectors:
 
 ```json
 {
   "version": 1,
   "repositories": [
+    { "pattern": "jsilvanus/*" },
     {
-      "id": "my-project",
-      "path": "/data/repositories/my-project",
-      "remote": "https://github.com/example/my-project.git"
+      "id": "other/project",
+      "name": "project",
+      "remote": "https://github.com/other/project.git",
+      "workspace": "other/project"
     }
   ]
 }
 ```
 
-The repository ID is the identifier exposed to MCP clients. The configured repository path must remain beneath the configured repository root. The agent cannot add arbitrary repositories to its own allow-list.
+A pattern authorizes cloning but does not imply that a workspace already exists.
 
-Keep credentials out of this file.
+## MCP repository lifecycle
 
-## Authentication
+The agent can request:
 
-There are two separate credentials:
-
-1. **MCP token** — authenticates clients connecting to this MCP server.
-2. **GitHub PAT** — authenticates Git operations against GitHub.
-
-The GitHub PAT is supplied to Git through `GIT_ASKPASS`; it is not embedded in repository URLs.
-
-Both credentials can be provided as mounted secret files in Docker. Environment variables remain available for non-Docker or migration use.
-
-Never commit either credential to the repository.
-
-## Docker deployment
-
-The repository contains a Dockerfile and Compose configuration for the single-container deployment model.
-
-### 1. Install Docker
-
-Install a current Docker Engine and Docker Compose on the VPS using your distribution's supported packages.
-
-### 2. Clone the server
-
-```bash
-git clone https://github.com/jsilvanus/personal-repo-mcp.git
-cd personal-repo-mcp
+```text
+clone_repository("jsilvanus/project")
 ```
 
-### 3. Create the host directories
+The server verifies that `jsilvanus/project` matches an administrator-approved selector, then clones it into persistent storage. The allow-list is not changed.
+
+Once cloned, the repository is available to the normal filesystem, Git, chain, and resource operations.
+
+`get_repositories` lists repositories currently present as managed local workspaces; it does not enumerate every repository matching a wildcard.
+
+## Deployment
+
+The intended production deployment is **one Docker container for the whole MCP**, not one container per repository:
+
+```text
+Internet
+   |
+HTTPS reverse proxy
+   |
+127.0.0.1:8000
+   |
++------------------------+
+| personal-repo-mcp      |
+| Python + MCP SDK + Git |
+| all workspaces         |
++-----------+------------+
+            |
+     persistent volume
+```
+
+### Quick VPS setup
+
+1. Install Docker and Compose.
+2. Clone this repository.
+3. Create the host configuration and secret directories:
 
 ```bash
 sudo mkdir -p /etc/personal-repo-mcp/secrets
 sudo mkdir -p /srv/personal-repo-mcp/repositories
-sudo chown -R root:root /etc/personal-repo-mcp
 ```
 
-The repository workspace directory must be writable by the container's runtime user. Follow the ownership/UID requirements in the Compose configuration for the deployment version you are using.
-
-### 4. Create `repositories.json`
-
-For example:
-
-```bash
-sudo mkdir -p /etc/personal-repo-mcp
-sudo nano /etc/personal-repo-mcp/repositories.json
-```
-
-Use the versioned structure described above. Paths in the configuration must correspond to paths inside the container's `/data/repositories` root.
-
-### 5. Create the secrets
-
-Create the MCP token and GitHub PAT as separate files:
-
-```bash
-sudo sh -c 'umask 077; printf "%s" "YOUR_MCP_TOKEN" > /etc/personal-repo-mcp/secrets/mcp-token'
-sudo sh -c 'umask 077; printf "%s" "YOUR_GITHUB_PAT" > /etc/personal-repo-mcp/secrets/github-pat'
-sudo chmod 600 /etc/personal-repo-mcp/secrets/mcp-token /etc/personal-repo-mcp/secrets/github-pat
-```
-
-Use a GitHub PAT with only the permissions required by the repositories you intend to manage.
-
-### 6. Prepare repositories
-
-Clone or otherwise populate the configured repositories beneath the persistent repository directory. The container is designed to work with multiple repositories in the same volume.
-
-### 7. Start the container
-
-```bash
-docker compose up -d --build
-```
-
-Check the service:
-
-```bash
-docker compose ps
-docker compose logs -f
-curl http://127.0.0.1:8000/healthz
-```
-
-The MCP port is intentionally bound to localhost by the Compose configuration. Do not expose port 8000 directly to the public Internet.
-
-### 8. Put HTTPS in front of it
-
-Use the VPS's existing reverse proxy (for example Caddy or nginx) to terminate TLS and proxy the MCP endpoint to:
-
-```text
-http://127.0.0.1:8000
-```
-
-The MCP client should connect to the HTTPS URL exposed by the reverse proxy and send the configured bearer token.
-
-Do not put the GitHub PAT in the reverse-proxy configuration or MCP client configuration. The MCP token and GitHub PAT have different purposes.
-
-### 9. Updates
-
-```bash
-git pull
-docker compose up -d --build
-```
-
-The repository data is stored outside the image, so rebuilding the container does not remove the working repositories.
-
-## Persistence and backups
-
-The repository directory is persistent state. This includes changes that have not been committed or pushed to GitHub, including untracked files.
-
-Back up the persistent repository directory independently of the Docker image. A GitHub remote is not a complete backup of the MCP workspace because uncommitted and untracked work may exist only on the VPS.
-
-Also back up `repositories.json` separately. Keep credential files out of normal backup sets unless your secret-management policy explicitly requires them to be backed up.
-
-## Security model
-
-The security model has several layers:
-
-```text
-MCP bearer token
-        |
-        v
-authenticated MCP client
-        |
-        v
-configured repository ID
-        |
-        v
-repositories.json allow-list
-        |
-        v
-path containment / repository boundary checks
-        |
-        v
-persistent workspace
-```
-
-GitHub access is a separate credential path:
-
-```text
-MCP Git operation
-        |
-        v
-GIT_ASKPASS
-        |
-        v
-GitHub PAT
-        |
-        v
-GitHub remote
-```
-
-MCP responses are passed through secret scrubbing so configured credentials are not intentionally returned to clients, including through command output and errors.
-
-### Important: no arbitrary code execution
-
-The current MCP API does **not** provide a generic shell command tool and does not provide repository test/build execution.
-
-Do not treat the current container as a sandbox for untrusted code. If test or build execution is added later, it should have a separate execution/sandboxing design with resource limits and a clear security boundary.
-
-## Submodules and nested repositories
-
-Git submodules and nested Git repositories can exist inside a configured repository. The parent repository can observe their state through normal Git operations, but filesystem writes through the parent repository context are rejected when the target path is inside a nested Git repository.
-
-A future version may register nested repositories independently so they can be modified through their own repository context.
-
-## Development
-
-Install the project with its development dependencies and run the test suite with `pytest`.
-
-The project targets Python 3.11+ and uses the MCP Python SDK 2.x.
+4. Install the package/CLI on the host, or use the project's Python environment:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e .
+```
+
+5. Configure the GitHub PAT and repository allow-list:
+
+```bash
+mcp-config pat
+mcp-config add repo jsilvanus/*
+```
+
+6. Create the MCP bearer-token secret at `/etc/personal-repo-mcp/secrets/mcp-token` and the GitHub PAT is stored by `mcp-config` at `/etc/personal-repo-mcp/secrets/github-pat`.
+
+7. Start the server:
+
+```bash
+docker compose up -d --build
+```
+
+8. Check it:
+
+```bash
+docker compose ps
+curl http://127.0.0.1:8000/healthz
+docker compose logs -f
+```
+
+The MCP port is deliberately bound to localhost. Put HTTPS termination and public access in an existing reverse proxy such as Caddy or nginx, proxying to `http://127.0.0.1:8000`.
+
+### Typical operational workflow
+
+Once deployed, the normal update/configuration workflow is:
+
+```bash
+git pull
+mcp-config pat
+mcp-config add repo jsilvanus/*
+docker compose up -d --build
+```
+
+No repository needs to be cloned during deployment. The agent can clone an approved repository when it needs it.
+
+## Authentication and secrets
+
+There are two independent credentials:
+
+1. **MCP token** — authenticates MCP clients.
+2. **GitHub PAT** — authenticates GitHub operations.
+
+The GitHub PAT is supplied to Git through `GIT_ASKPASS` and is not embedded in remote URLs. MCP responses and errors pass through central secret scrubbing.
+
+Keep credentials out of `repositories.json` and never commit them.
+
+## Security model
+
+```text
+MCP bearer token
+        |
+authenticated client
+        |
+repository selector / id
+        |
+repositories.json allow-list
+        |
+path containment + repository boundaries
+        |
+persistent workspace
+```
+
+The GitHub PAT is a separate credential path. Docker is the deployment boundary; the allow-list and filesystem validation are the application authorization boundary.
+
+The current MCP API has no generic shell command and no test/build execution. Do not treat the container as a sandbox for arbitrary repository code. Adding code execution later requires a separate sandbox/resource-limit design.
+
+## Submodules and nested repositories
+
+Nested Git repositories and submodules may be read through the parent workspace, but filesystem writes through the parent repository context are rejected. A future version may register nested repositories independently.
+
+## Development
+
+The project targets Python 3.11+ and uses MCP Python SDK 2.x.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e '.[test]'
 pytest
 ```
 
 ## Roadmap
 
-The current MVP intentionally leaves several capabilities for later work:
-
 - CI/regression workflow.
-- Test and build execution with proper sandboxing.
+- Test/build execution with proper sandboxing.
 - Artifact resources and download mechanisms.
-- Filesystem watchers for changes made outside the MCP process.
-- More complete nested-repository/submodule management.
-- MCP Tasks when the relevant SDK/client support is sufficiently mature.
-
-The resource namespace already reserves `tests/` and `artifacts/` so these additions do not require changing the basic resource model.
+- Filesystem watchers for external changes.
+- More complete nested-repository management.
+- MCP Tasks when SDK/client support is sufficiently mature.
 
 ## License
 
-This project is licensed under the **European Union Public Licence 1.2 (EUPL-1.2)**.
+European Union Public Licence 1.2 (EUPL-1.2).
