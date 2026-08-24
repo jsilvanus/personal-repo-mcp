@@ -5,6 +5,7 @@ from mcp.server.context import Context
 from mcp.server.transport_security import TransportSecuritySettings
 
 from ..config import Settings
+from ..metrics import Metrics
 from ..repositories import RepositoryError, RepositoryManager
 from ..resources import register_resources
 from ..resources.invalidation import notify_repository_set_changed
@@ -18,6 +19,7 @@ from ..tools.workspace import register_workspace_tools
 
 def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer:
     """Create the MCP server and register the available tools, resources, and prompts."""
+    metrics = Metrics()
     mcp = MCPServer(
         name="Personal Repo MCP",
         instructions=(
@@ -28,6 +30,7 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
         ),
         middleware=[
             make_secret_scrubber((settings.token, settings.github_pat)),
+            metrics.middleware(),
         ],
     )
 
@@ -77,7 +80,7 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
     register_workspace_tools(mcp, repositories)
     register_chain_tools(mcp)
     register_prompts(mcp)
-    register_resources(mcp, repositories)
+    register_resources(mcp, repositories, metrics)
     return mcp
 
 

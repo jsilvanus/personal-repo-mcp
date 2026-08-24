@@ -38,9 +38,17 @@ def system_repositories_uri() -> str:
     return "system://repositories"
 
 
+def system_statistics_uri() -> str:
+    return "system://statistics"
+
+
 def repository_info_uri(repository: str) -> str:
     return f"repo://{repository}/info"
 
 
 def repository_storage_uri(repository: str) -> str:
     return f"repo://{repository}/storage"
+
+
+def repository_statistics_uri(repository: str) -> str:
+    return f"repo://{repository}/statistics"
