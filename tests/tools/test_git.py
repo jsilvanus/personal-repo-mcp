@@ -12,10 +12,13 @@ def test_git_tools_are_registered(tmp_path: Path):
         host="127.0.0.1",
         port=8000,
         token="test",
+        github_pat="secret",
+        git_backend="git",
         allowed_hosts=("127.0.0.1:*",),
         allowed_origins=("http://127.0.0.1:*",),
         repository_root=tmp_path,
         repositories=(config,),
+        repository_patterns=(),
     )
     server = create_mcp(settings, manager)
     assert server is not None

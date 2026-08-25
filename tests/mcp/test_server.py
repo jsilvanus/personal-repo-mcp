@@ -13,6 +13,8 @@ async def test_phase_one_tools_are_registered() -> None:
         host="127.0.0.1",
         port=8000,
         token="secret",
+        github_pat="secret",
+        git_backend="git",
         allowed_hosts=("127.0.0.1:*",),
         allowed_origins=("http://127.0.0.1:*",),
         repository_root=Path("/tmp"),
@@ -24,6 +26,7 @@ async def test_phase_one_tools_are_registered() -> None:
                 workspace=Path("/tmp/demo"),
             ),
         ),
+        repository_patterns=(),
     )
     mcp = create_mcp(settings, RepositoryManager(settings.repository_root, settings.repositories))
     tools = await mcp.list_tools()

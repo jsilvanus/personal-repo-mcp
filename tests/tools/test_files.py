@@ -13,17 +13,20 @@ async def test_phase_two_tools_are_registered(tmp_path: Path) -> None:
         host="127.0.0.1",
         port=8000,
         token="secret",
+        github_pat="secret",
+        git_backend="git",
         allowed_hosts=("127.0.0.1:*",),
         allowed_origins=("http://127.0.0.1:*",),
         repository_root=tmp_path,
         repositories=(
             RepositoryConfig("demo", "Demo", "https://example.invalid/demo.git", tmp_path / "demo"),
         ),
+        repository_patterns=(),
     )
-    mcp = create_mcp(settings, RepositoryManager(settings.repositories))
+    mcp = create_mcp(settings, RepositoryManager(settings.repository_root, settings.repositories))
     names = {tool.name for tool in await mcp.list_tools()}
     assert {
-        "read_file_tool",
+        "read_file",
         "list_directory",
         "search_text",
         "find_files",

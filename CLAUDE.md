@@ -51,7 +51,7 @@ benchmarks/            MCP + hot-git worker benchmarks
 
 ```bash
 pip install -e ".[test]"          # installs mcp/starlette/uvicorn + hot-git (git dep) + pytest
-python -m pytest -q               # test suite — see "Known issue" below, currently broken
+python -m pytest -q               # 61 passed as of this writing
 ```
 
 There is **no configured linter/formatter/type-checker** in this repo (no ruff, mypy,
@@ -65,33 +65,57 @@ inline). See `docs/DEPLOYMENT.md` and `config/repositories.example.json`.
 
 Docker: `docker compose up -d --build` after `mcp-config pat` / `mcp-config add repo`.
 
-## Known issue — broken import (fix before anything else touches `mcp/server.py`)
+## History — server-startup and test-suite breakage (fixed)
 
-`src/personal_repo_mcp/mcp/server.py` imports:
+The server and test suite were both broken as of commit `f9c84f8` and have since been
+fixed on this branch. Kept here because the same class of bug (SDK version drift, and
+import-path mistakes during refactors) is likely to recur:
 
-```python
-from ..tools.prompts import register_prompts
-```
+- `mcp/server.py` imported `register_prompts` from `..tools.prompts`, which doesn't
+  exist — prompt registration lives in `mcp/prompts.py`. Commit `094adec` moved three
+  of four tool-registrar modules from `mcp/` to `tools/` and rewrote all four imports
+  uniformly, missing that `prompts.py` never moved. This alone prevented the server
+  from starting and the test suite from being collected.
+- No `tests/` subdirectory had an `__init__.py`, and several test files shared a
+  basename across subdirectories (`test_paths.py` in both `tests/filesystem/` and
+  `tests/repositories/`; `test_files.py` in `tests/filesystem/` and `tests/tools/`;
+  `test_git.py` in `tests/git/` and `tests/tools/`). Under pytest's default
+  rootdir-relative import mode this caused `import file mismatch` collection errors.
+  Fixed by adding `__init__.py` to every `tests/` subpackage.
+- `mcp/server.py` imported `Context` from `mcp.server.context` instead of
+  `mcp.server.mcpserver` (the class the `@mcp.tool()`/`@mcp.resource()` decorators
+  actually special-case for injection and exclude from JSON-schema generation). Every
+  other file in the codebase already used the correct import — this was the one
+  straggler, and it broke `tools/list` schema generation for `clone_repository`. The
+  earlier commits `9944942`/`d82962f`/`2178958`/`80320ef` ("fix: import MCP context
+  from sdk context module" etc.) were chasing the same class of bug elsewhere. **If a
+  `Context`-typed tool/resource parameter starts throwing `PydanticInvalidForJsonSchema`
+  or a "Context injection ... not supported" `ValueError` after bumping the `mcp`
+  dependency, check this import first** — the pinned range (`mcp>=2.0,<3`) allows the
+  SDK's internal module layout to shift under you.
+- `resources/help.py` registered static (non-templated) `mcp://help/*` resources with
+  a handler built as `lambda text=text: text` — a default-argument trick to dodge
+  Python's loop late-binding bug. The installed SDK version now rejects *any*
+  parameter (defaulted or not) on a static resource. Fixed with a real closure
+  factory (`_make_help_handler`) instead of a default-arg lambda.
+- `resources/system.py`'s three static resources (`system_info`, `system_storage`,
+  `system_repositories`) each declared an unused `ctx: Context` parameter. The SDK
+  now explicitly disallows Context injection on non-templated resources. Removed the
+  parameter (it was dead code) rather than working around it.
+- A handful of tests had drifted from the code they exercised: `Settings(...)`
+  call-sites missing the `github_pat`/`git_backend`/`repository_patterns` fields added
+  later; `register_resources(...)` missing the `metrics` argument; a
+  `RepositoryManager(...)` call passing the wrong positional args; an assertion
+  expecting a tool named `read_file_tool` instead of its actual registered name,
+  `read_file`; a prompt test asserting on the raw `GetPromptResult` object instead of
+  `.messages`, and checking `isinstance(content, dict)` instead of the real
+  `EmbeddedResource`/`TextContent` SDK types; and `tests/git/test_hot_git_backend.py`
+  relying on `git init`'s default branch being `main`, which isn't true on every
+  system (this one defaults to `master`) — fixed with `git init -b main`.
 
-but prompt registration actually lives at `src/personal_repo_mcp/mcp/prompts.py` —
-`tools/prompts.py` does not exist. This was introduced by commit `094adec` ("fix:
-import tool registrars from tools package"), which moved the other three tool
-registrars from `mcp/` to `tools/` but not `prompts.py`, then rewrote all four
-imports uniformly. **The server cannot start and the test suite cannot even be
-collected** in this state — confirmed by installing dependencies into a clean venv
-and running `pytest`. Fix is a one-line import correction (`from ..prompts import
-register_prompts`, since `prompts.py` stays in `mcp/`).
-
-There is also a **separate, pre-existing test-collection problem**: several test
-files share a basename across different `tests/` subdirectories (`test_paths.py` in
-both `tests/filesystem/` and `tests/repositories/`; `test_files.py` in
-`tests/filesystem/` and `tests/tools/`; `test_git.py` in `tests/git/` and
-`tests/tools/`), and no `tests/` subdirectory has an `__init__.py`. Under pytest's
-default rootdir-relative import mode this causes `import file mismatch` errors during
-collection, independent of the import bug above. Fix by adding `__init__.py` to every
-`tests/` subpackage (or renaming the duplicated files) — do this before trusting any
-"tests pass" result in this repo, since collection currently aborts before any test
-runs.
+All of the above is fixed; `python -m pytest -q` passes clean (61 passed). Re-verify
+after any `mcp` or `hot-git` dependency bump, since several of these were pure SDK
+version drift, not one-off typos.
 
 ## Security model — what's real vs. what's not wired up
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from mcp.server import MCPServer
-from mcp.server.context import Context
+from mcp.server.mcpserver import Context
 from mcp.server.transport_security import TransportSecuritySettings
 
 from ..config import Settings
@@ -13,8 +13,8 @@ from ..security.secrets import make_secret_scrubber
 from ..tools.chain import register_chain_tools
 from ..tools.files import register_file_tools
 from ..tools.git import register_git_tools
-from ..tools.prompts import register_prompts
 from ..tools.workspace import register_workspace_tools
+from .prompts import register_prompts
 
 
 def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer:

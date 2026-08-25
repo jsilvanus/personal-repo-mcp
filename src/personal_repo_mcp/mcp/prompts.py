@@ -47,9 +47,10 @@ def register_prompts(mcp: MCPServer) -> None:
                 "role": "user",
                 "content": (
                     "Use the embedded help index as the starting point, then load the focused help resources "
-                    "you need (repositories, files, git, chain-command, or resources). Inspect repository and "
-                    "Git state before editing, make the smallest safe changes, review the resulting diff, and "
-                    "use the Git tools to commit or synchronize when appropriate."
+                    "you need: mcp://help/repositories, mcp://help/files, mcp://help/git, "
+                    "mcp://help/chain-command, or mcp://help/resources. Inspect repository and Git state before "
+                    "editing, make the smallest safe changes, review the resulting diff, and use the Git tools "
+                    "to commit or synchronize when appropriate."
                 ),
             },
         ]
