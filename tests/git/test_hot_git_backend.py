@@ -7,7 +7,7 @@ from personal_repo_mcp.git.backend import HotGitBackend
 
 
 def init_repo(path: Path) -> None:
-    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.name", "test"], cwd=path, check=True)
     subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=path, check=True)
     (path / "README.md").write_text("one\n", encoding="utf-8")

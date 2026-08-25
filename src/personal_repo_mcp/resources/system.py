@@ -4,7 +4,6 @@ import os
 import shutil
 from pathlib import Path
 
-from mcp.server.mcpserver import Context
 from mcp.server import MCPServer
 
 from ..repositories import RepositoryManager
@@ -55,7 +54,7 @@ def register_system_resources(mcp: MCPServer, repositories: RepositoryManager) -
         description="Stable MCP server and effective container capability information.",
         mime_type="application/json",
     )
-    def system_info(ctx: Context) -> dict[str, object]:
+    def system_info() -> dict[str, object]:
         return {
             "version": "1.0.0",
             "transport": "streamable-http",
@@ -71,7 +70,7 @@ def register_system_resources(mcp: MCPServer, repositories: RepositoryManager) -
         description="Current storage usage for the persistent repository workspace.",
         mime_type="application/json",
     )
-    def system_storage(ctx: Context) -> dict[str, object]:
+    def system_storage() -> dict[str, object]:
         usage = shutil.disk_usage(repositories.root)
         return {
             "path": str(repositories.root),
@@ -87,5 +86,5 @@ def register_system_resources(mcp: MCPServer, repositories: RepositoryManager) -
         description="Allowed repository selectors and currently cloned repository workspaces.",
         mime_type="application/json",
     )
-    def system_repositories(ctx: Context) -> dict[str, object]:
+    def system_repositories() -> dict[str, object]:
         return {"repositories": _repositories(repositories)}

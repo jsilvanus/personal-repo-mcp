@@ -9,6 +9,7 @@ import pytest
 from mcp.server import MCPServer
 
 from personal_repo_mcp.config import RepositoryConfig
+from personal_repo_mcp.metrics import Metrics
 from personal_repo_mcp.repositories import RepositoryManager
 from personal_repo_mcp.resources import register_resources
 
@@ -25,7 +26,7 @@ async def test_resource_templates_are_registered(tmp_path: Path) -> None:
         (RepositoryConfig("foo", "Foo", "https://example.invalid/foo.git", workspace),),
     )
     server = MCPServer("test")
-    register_resources(server, manager)
+    register_resources(server, manager, Metrics())
 
     templates = await server.list_resource_templates()
     uris = {str(template.uri_template) for template in templates}

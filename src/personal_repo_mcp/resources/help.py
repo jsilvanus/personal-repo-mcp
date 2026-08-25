@@ -12,6 +12,13 @@ HELP = {
 }
 
 
+def _make_help_handler(text: str):
+    def handler() -> str:
+        return text
+
+    return handler
+
+
 def register_help_resources(mcp: MCPServer) -> None:
     for topic, text in HELP.items():
         uri = f"mcp://help/{topic}"
@@ -21,4 +28,4 @@ def register_help_resources(mcp: MCPServer) -> None:
             title=f"MCP help: {topic}",
             description=f"Operational guidance for Personal Repo MCP {topic} workflows.",
             mime_type="text/markdown",
-        )(lambda text=text: text)
+        )(_make_help_handler(text))
