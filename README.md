@@ -4,6 +4,28 @@ A self-hosted, multi-repository MCP server for AI agents. It gives an agent a pe
 
 **Version 1.0.0 — MVP**
 
+## Quick install
+
+The quickest way to run the MVP is the Docker Compose deployment described in [`docs/QUICK_INSTALL.md`](docs/QUICK_INSTALL.md).
+
+In short:
+
+```bash
+git clone https://github.com/jsilvanus/personal-repo-mcp.git
+cd personal-repo-mcp
+cp .env.example .env
+mkdir -p config repositories secrets
+cp config/repositories.example.json config/repositories.json
+printf '%s\n' "$(openssl rand -hex 32)" > secrets/mcp_token
+printf '%s\n' 'your-github-pat' > secrets/github_pat
+chmod 600 secrets/mcp_token secrets/github_pat
+docker compose up -d --build
+```
+
+Before starting the container, edit `.env`, `config/repositories.json`, and `secrets/github_pat`. The MCP token is generated locally above; keep it secret. The default Compose deployment binds the MCP endpoint to `127.0.0.1:8000`, so an HTTPS reverse proxy is required for remote access.
+
+For the full production checklist, see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 ## Core idea
 
 The administrator controls **what repositories the agent may access**. The agent controls **which allowed repositories it actually clones**.
@@ -126,7 +148,7 @@ docker compose up -d --build
 
 For hot-git mode, the normal Python dependency installation installs the library. No submodule checkout is required.
 
-See the deployment documentation in `docs/` for persistent storage, credentials, HTTPS, and configuration details.
+See [`docs/QUICK_INSTALL.md`](docs/QUICK_INSTALL.md) for the shortest setup path and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for persistent storage, credentials, HTTPS, and configuration details.
 
 ## License
 
