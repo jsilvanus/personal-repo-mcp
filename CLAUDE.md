@@ -39,6 +39,9 @@ src/personal_repo_mcp/
   resources/           MCP resources: help text, repo/git/system state, subscriptions
   chain/               chain_command executor + model (single-repo op chaining)
   audit/               structured audit logging (metadata only, no file contents/secrets)
+  oauth/               optional OAuth AS/RS + OIDC relying party, only when OIDC_ISSUER is set
+                       (server.py routes, oidc.py Authlib RP, tokens.py joserfc JWTs,
+                       store.py SQLite, cimd.py client metadata, pages.py HTML + CSP)
   operations/          long-running task/state tracking
 
 tests/                 mirrors src/ layout (audit, chain, filesystem, git, mcp,
@@ -51,7 +54,7 @@ benchmarks/            MCP + hot-git worker benchmarks
 
 ```bash
 pip install -e ".[test]"          # installs mcp/starlette/uvicorn + hot-git (git dep) + pytest
-python -m pytest -q               # 61 passed as of this writing
+python -m pytest -q               # 110 passed as of this writing
 ```
 
 There is **no configured linter/formatter/type-checker** in this repo (no ruff, mypy,
@@ -113,7 +116,7 @@ import-path mistakes during refactors) is likely to recur:
   relying on `git init`'s default branch being `main`, which isn't true on every
   system (this one defaults to `master`) — fixed with `git init -b main`.
 
-All of the above is fixed; `python -m pytest -q` passes clean (61 passed). Re-verify
+All of the above is fixed; `python -m pytest -q` passed clean (61 passed) at that time. Re-verify
 after any `mcp` or `hot-git` dependency bump, since several of these were pure SDK
 version drift, not one-off typos.
 
@@ -130,6 +133,18 @@ version drift, not one-off typos.
   scaffolding for the "token scopes" item `docs/SECURITY.md` lists under future work.
   If you wire it up, add an integration test that exercises it against real tool
   dispatch (only `test_policy.py` exists today, tested in isolation).
+
+## OAuth / OIDC (optional)
+
+`OIDC_ISSUER` unset = the app is exactly the static-bearer-token server; `create_app` adds no
+routes and `BearerAuthMiddleware` behaves as before. Set = `oauth/server.py` mounts the
+codestash `mcp/api-connector-style` authorization server (ported from TypeScript) with OIDC as
+the only sign-in, and the middleware also accepts its JWT access tokens and answers 401 with the
+RFC 9728 challenge. Read codestash `mcp/api-connector-style/LEARNED.md` before changing the
+OAuth plumbing (consent CSP `form-action`, ticket between sign-in and consent, `iss`/`aud`
+checks). Tests: `tests/oauth/` with an in-process fake IdP (`fake_idp.py`) reached through an
+httpx2 ASGI transport (`create_app(..., oauth_options=...)`). Authlib's httpx client is built on
+`httpx2` (not `httpx`), and `authlib.jose` is deprecated: use `joserfc`.
 
 ## Conventions worth following
 

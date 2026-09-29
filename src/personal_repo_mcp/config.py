@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib import parse as urlparse
 
 
 class ConfigurationError(ValueError):
@@ -22,6 +25,29 @@ class RepositoryConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class OAuthSettings:
+    """OAuth authorization server + OIDC sign-in, enabled only when OIDC_ISSUER is set."""
+
+    public_url: str
+    jwt_secret: bytes
+    oidc_issuer: str
+    oidc_client_id: str
+    oidc_client_secret: str | None
+    oidc_scopes: str
+    oidc_button_label: str
+    database_path: Path
+    production: bool
+
+    @property
+    def resource(self) -> str:
+        return self.public_url + "/mcp"
+
+    @property
+    def redirect_uri(self) -> str:
+        return self.public_url + "/oidc/callback"
+
+
+@dataclass(frozen=True, slots=True)
 class Settings:
     """Application configuration loaded from environment variables and JSON."""
 
@@ -35,6 +61,7 @@ class Settings:
     repository_root: Path
     repositories: tuple[RepositoryConfig, ...]
     repository_patterns: tuple[str, ...]
+    oauth: OAuthSettings | None = None
 
 
 def _csv(value: str, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -122,6 +149,84 @@ def _parse_entries(raw: list[Any], root: Path) -> tuple[list[RepositoryConfig], 
     return repositories, patterns
 
 
+DEFAULT_OIDC_SCOPES = "openid email profile"
+DEFAULT_OIDC_BUTTON_LABEL = "Sign in with single sign-on"
+
+
+def _absolute_http_url(name: str, value: str) -> urlparse.ParseResult:
+    parsed = urlparse.urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ConfigurationError(f"{name} must be an absolute http(s) URL")
+    if parsed.username or parsed.password or parsed.fragment:
+        raise ConfigurationError(f"{name} must not contain credentials or a fragment")
+    return parsed
+
+
+def _decode_jwt_secret(value: str) -> bytes:
+    text = value.strip()
+    padded = text + "=" * (-len(text) % 4)
+    try:
+        if "-" in text or "_" in text:
+            secret = base64.urlsafe_b64decode(padded)
+        else:
+            secret = base64.b64decode(padded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ConfigurationError("JWT_SECRET must be base64-encoded") from exc
+    if len(secret) < 32:
+        raise ConfigurationError("JWT_SECRET must decode to at least 32 bytes (e.g. `openssl rand -base64 32`)")
+    return secret
+
+
+def load_oauth_settings(root: Path) -> OAuthSettings | None:
+    """Load the optional OAuth/OIDC configuration. Unset/empty OIDC_ISSUER turns the feature off."""
+    issuer = os.getenv("OIDC_ISSUER", "").strip()
+    if not issuer:
+        return None
+
+    public_url_value = os.getenv("PERSONAL_REPO_MCP_PUBLIC_URL", "").strip().rstrip("/")
+    if not public_url_value:
+        raise ConfigurationError("PERSONAL_REPO_MCP_PUBLIC_URL must be set when OIDC_ISSUER is set")
+    public_url = _absolute_http_url("PERSONAL_REPO_MCP_PUBLIC_URL", public_url_value)
+    if public_url.query or public_url.params:
+        raise ConfigurationError("PERSONAL_REPO_MCP_PUBLIC_URL must not contain a query")
+    # The public URL is the production switch: an https:// deployment is production.
+    production = public_url.scheme == "https"
+
+    parsed_issuer = _absolute_http_url("OIDC_ISSUER", issuer)
+    if production and parsed_issuer.scheme != "https":
+        raise ConfigurationError("OIDC_ISSUER must use https:// when PERSONAL_REPO_MCP_PUBLIC_URL is https://")
+
+    client_id = os.getenv("OIDC_CLIENT_ID", "").strip()
+    if not client_id:
+        raise ConfigurationError("OIDC_CLIENT_ID must be set when OIDC_ISSUER is set")
+    client_secret = _read_secret("OIDC_CLIENT_SECRET", "OIDC_CLIENT_SECRET_FILE", required=False)
+
+    scopes = " ".join(os.getenv("OIDC_SCOPES", "").split()) or DEFAULT_OIDC_SCOPES
+    if "openid" not in scopes.split(" "):
+        raise ConfigurationError("OIDC_SCOPES must contain 'openid'")
+
+    button_label = os.getenv("OIDC_BUTTON_LABEL", "").strip() or DEFAULT_OIDC_BUTTON_LABEL
+
+    jwt_secret_text = _read_secret("JWT_SECRET", "JWT_SECRET_FILE")
+    assert jwt_secret_text is not None
+    jwt_secret = _decode_jwt_secret(jwt_secret_text)
+
+    db_value = os.getenv("PERSONAL_REPO_MCP_OAUTH_DB", "").strip()
+    database_path = Path(db_value) if db_value else root.parent / "data" / "oauth.sqlite"
+
+    return OAuthSettings(
+        public_url=public_url_value,
+        jwt_secret=jwt_secret,
+        oidc_issuer=issuer,
+        oidc_client_id=client_id,
+        oidc_client_secret=client_secret,
+        oidc_scopes=scopes,
+        oidc_button_label=button_label,
+        database_path=database_path.resolve(),
+        production=production,
+    )
+
+
 def load_settings() -> Settings:
     root = Path(os.getenv("PERSONAL_REPO_MCP_ROOT", "/srv/personal-repo-mcp/repositories")).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -144,6 +249,7 @@ def load_settings() -> Settings:
     github_pat = _read_secret("PERSONAL_REPO_MCP_GITHUB_PAT", "PERSONAL_REPO_MCP_GITHUB_PAT_FILE")
     assert token is not None
     assert github_pat is not None
+    oauth = load_oauth_settings(root)
     return Settings(
         host=os.getenv("PERSONAL_REPO_MCP_HOST", "127.0.0.1"),
         port=port,
@@ -155,4 +261,5 @@ def load_settings() -> Settings:
         repository_root=root,
         repositories=tuple(repositories),
         repository_patterns=tuple(sorted(set(patterns))),
+        oauth=oauth,
     )

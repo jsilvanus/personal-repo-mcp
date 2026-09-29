@@ -82,6 +82,7 @@ The help resources are intentionally separate from `tools/list`: the MCP tool li
 - Secret scrubbing from MCP output
 - Git submodule safeguards
 - Docker deployment
+- Optional OAuth 2.1 + OIDC single sign-on for OAuth MCP clients
 - Optional **hot-git** backend for persistent, treeless repository reads and edits
 
 ## Git backends
@@ -133,6 +134,10 @@ C(base=B) -> commit C
 ```
 
 This is the foundation for integrating the backend with `chain_command` without allowing concurrent writers to silently overwrite each other.
+
+## OAuth and single sign-on (optional)
+
+Set `OIDC_ISSUER` (plus `OIDC_CLIENT_ID`, `PERSONAL_REPO_MCP_PUBLIC_URL` and `JWT_SECRET`) to let OAuth MCP clients such as ChatGPT or Claude connect: the server then runs an embedded OAuth authorization server (CIMD client ids, PKCE, refresh tokens) whose sign-in step goes through your OIDC identity provider, e.g. authentik. The server is an OIDC relying party, never an OpenID provider. The static bearer token keeps working. There are no local accounts: the identity provider's application policy decides who may sign in, and everyone who can sign in and approve gets full access. With `OIDC_ISSUER` unset nothing changes. Setup and all variables: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#oauth-and-single-sign-on-oidc).
 
 ## Deployment
 

@@ -17,6 +17,13 @@ from ..tools.workspace import register_workspace_tools
 from .prompts import register_prompts
 
 
+def _secrets(settings: Settings) -> tuple[str, ...]:
+    secrets = [settings.token, settings.github_pat]
+    if settings.oauth is not None and settings.oauth.oidc_client_secret:
+        secrets.append(settings.oauth.oidc_client_secret)
+    return tuple(secrets)
+
+
 def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer:
     """Create the MCP server and register the available tools, resources, and prompts."""
     metrics = Metrics()
@@ -29,7 +36,7 @@ def create_mcp(settings: Settings, repositories: RepositoryManager) -> MCPServer
             "Read mcp://help/index for operational guidance when first using this MCP."
         ),
         middleware=[
-            make_secret_scrubber((settings.token, settings.github_pat)),
+            make_secret_scrubber(_secrets(settings)),
             metrics.middleware(),
         ],
     )
