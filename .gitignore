@@ -6,3 +6,4 @@ __pycache__/
 repositories/
 config/repositories.json
 secrets/
+data/

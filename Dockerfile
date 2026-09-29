@@ -26,7 +26,7 @@ COPY src ./src
 
 RUN pip install --no-cache-dir .
 
-RUN mkdir -p /srv/personal-repo-mcp/repositories /etc/personal-repo-mcp \
+RUN mkdir -p /srv/personal-repo-mcp/repositories /srv/personal-repo-mcp/data /etc/personal-repo-mcp \
     && useradd --create-home --uid 10001 app \
     && chown -R app:app /srv/personal-repo-mcp
 

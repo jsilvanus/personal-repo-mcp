@@ -14,12 +14,22 @@ services:
       PERSONAL_REPO_MCP_ALLOWED_ORIGINS: ${PERSONAL_REPO_MCP_ALLOWED_ORIGINS:?set PERSONAL_REPO_MCP_ALLOWED_ORIGINS}
       PERSONAL_REPO_MCP_HOST: 0.0.0.0
       PERSONAL_REPO_MCP_PORT: 8000
+      # Optional OAuth + OIDC sign-in; empty OIDC_ISSUER keeps it off (see docs/DEPLOYMENT.md).
+      PERSONAL_REPO_MCP_PUBLIC_URL: ${PERSONAL_REPO_MCP_PUBLIC_URL:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-}
+      OIDC_BUTTON_LABEL: ${OIDC_BUTTON_LABEL:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      PERSONAL_REPO_MCP_OAUTH_DB: /srv/personal-repo-mcp/data/oauth.sqlite
     secrets:
       - mcp_token
       - github_pat
     volumes:
       - ./config/repositories.json:/etc/personal-repo-mcp/repositories.json:ro
       - ./repositories:/srv/personal-repo-mcp/repositories
+      - ./data:/srv/personal-repo-mcp/data
     security_opt:
       - no-new-privileges:true
     cap_drop:

@@ -13,6 +13,10 @@ dependencies = [
   "starlette>=0.48.0",
   "uvicorn[standard]>=0.35.0",
   "hot-git @ git+https://github.com/jsilvanus/hot-git.git@main",
+  # OAuth + OIDC sign-in (active only when OIDC_ISSUER is set)
+  "authlib>=1.8,<2",
+  "joserfc>=1.7",
+  "httpx2>=2.13",
 ]
 
 [project.optional-dependencies]
